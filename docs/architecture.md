@@ -2,7 +2,7 @@
 
 MUZ-3 adds native ZIP/PDF import, persisted field/matching review and accounting
 Excel export on top of the initial slice below. See [ZIP-to-Excel](zip-to-excel.md)
-for current behavior, schema v2, validation limits and the remaining increments.
+for current behavior, schema v3, validation limits and the remaining increments.
 
 The first increment is the complete **folder -> preserved bytes -> SQLite ->
 batch screen** slice. Imported does not mean legally approved. No case links are

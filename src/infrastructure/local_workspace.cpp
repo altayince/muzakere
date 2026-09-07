@@ -37,6 +37,14 @@ void apply_temporary_service_date(AccountingRow& row, const std::string& date) {
 
 std::vector<AccountingRow> load_accounting(SqliteRepository& repository, const std::string& batch_id) {
     auto rows = repository.accounting_rows(batch_id);
+    std::vector<AccountingRow> expanded;
+    bool changed=false;
+    for(const auto& row:rows) {
+        auto split=split_legacy_debtors(row);
+        changed=changed || split.size()!=1 || encode_row(split.front())!=encode_row(row);
+        expanded.insert(expanded.end(),std::make_move_iterator(split.begin()),std::make_move_iterator(split.end()));
+    }
+    if(changed) { repository.replace_accounting(batch_id,expanded); rows=std::move(expanded); }
     std::vector<AccountingRow> updated;
     const auto today = QDate::currentDate().toString("dd.MM.yyyy").toStdString();
     for (auto& row : rows) {

@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QSet>
 #include <QMap>
+#include <QUuid>
 #include <algorithm>
 
 namespace muz {
@@ -40,6 +41,44 @@ bool valid_iban(const QString& iban) {
     int remainder = 0;
     for (const auto digit : digits) remainder = (remainder * 10 + digit.digitValue()) % 97;
     return remainder == 1;
+}
+
+std::vector<DebtorEntry> parse_debtors(const QString& block) {
+    std::vector<DebtorEntry> result;
+    const QRegularExpression marker(R"((?:^|\s)[0-9]{1,3}\s*-\s*(?=\p{L}))");
+    auto matches=marker.globalMatch(block);
+    std::vector<qsizetype> starts;
+    while(matches.hasNext())starts.push_back(matches.next().capturedStart());
+    if(starts.empty())starts.push_back(0);
+    else if(!block.left(starts.front()).trimmed().isEmpty())starts.insert(starts.begin(),0);
+    for(std::size_t i=0;i<starts.size();++i) {
+        auto part=block.mid(starts[i],(i+1<starts.size()?starts[i+1]:block.size())-starts[i]).trimmed();
+        part.remove(QRegularExpression(R"(^[0-9]{1,3}\s*-\s*)"));
+        if(part.isEmpty())continue;
+        const auto match=QRegularExpression(R"(^([^,]+),\s*([0-9]{10,11})\s*(?:TC|T\.C\.|VERGİ))").match(part);
+        const auto name=match.hasMatch()?match.captured(1).simplified():part.section(',',0,0).simplified();
+        result.push_back({name,match.captured(2),part});
+    }
+    return result;
+}
+
+std::vector<AccountingRow> debtor_rows(const AccountingRow& base, const std::vector<DebtorEntry>& debtors) {
+    if(debtors.empty())return {base};
+    std::vector<AccountingRow> result;
+    for(std::size_t i=0;i<debtors.size();++i) {
+        auto row=base;
+        row.debtor_index=static_cast<int>(i);
+        if(i>0)row.id=QUuid::createUuidV5(QUuid("{83039c8c-de0e-4f4d-a3ec-3ba3b4ac8509}"),
+            QByteArray::fromStdString(base.document_id+"/debtor/"+std::to_string(i))).toString(QUuid::WithoutBraces).toStdString();
+        std::erase(row.warnings,"Birden fazla borçlu var; tutar borçlulara bölünmedi");
+        std::erase(row.warnings,"Borçlu TCKN/VKN okunamadı");
+        std::erase_if(row.evidence,[](const auto& evidence){return evidence.column==debtor || evidence.column==debtor_id;});
+        field(row,debtor,debtors[i].name,debtors[i].snippet);
+        field(row,debtor_id,debtors[i].identifier,debtors[i].snippet);
+        if(debtors[i].identifier.isEmpty())warn(row,"Borçlu TCKN/VKN okunamadı");
+        result.push_back(std::move(row));
+    }
+    return result;
 }
 } // namespace
 
@@ -92,23 +131,13 @@ ParsedDocument parse_document(const IncomingDocument& document, const PdfText& p
 
     auto debtor_block = capture(text, R"(3\.\s*BORÇLUNUN.*?:\s*(.*?)\s*4\.\s*HACZİN)");
     if (debtor_block.isEmpty()) debtor_block = capture(text, R"(\bBORÇLU\s*:\s*(.*?)(?=BORÇ MİKTARI|YUKARIDA|İCRA MÜDÜR))");
-    QStringList names, identifiers;
-    const QRegularExpression party(R"((?:^|\s\d+\s*-\s*)([^,]+),\s*(\d{10,11})\s*(?:TC|T\.C\.|VERGİ))");
-    auto parties = party.globalMatch(debtor_block);
-    while (parties.hasNext()) {
-        const auto match = parties.next();
-        auto name = match.captured(1).simplified();
-        name.remove(QRegularExpression(R"(^\d+\s*-\s*)"));
-        names.append(name); identifiers.append(match.captured(2));
+    parsed.debtors=parse_debtors(debtor_block);
+    if(parsed.debtors.empty())warn(row,"Borçlu bilgileri okunamadı");
+    else {
+        field(row,debtor,parsed.debtors.front().name,parsed.debtors.front().snippet);
+        field(row,debtor_id,parsed.debtors.front().identifier,parsed.debtors.front().snippet);
+        if(parsed.debtors.front().identifier.isEmpty())warn(row,"Borçlu TCKN/VKN okunamadı");
     }
-    if (names.isEmpty() && debtor_block.contains(',')) {
-        names.append(debtor_block.section(',', 0, 0).trimmed());
-        warn(row, "Borçlu TCKN/VKN okunamadı");
-    }
-    field(row, debtor, names.join("; "), debtor_block);
-    field(row, debtor_id, identifiers.join("; "), debtor_block);
-    if (names.isEmpty()) warn(row, "Borçlu bilgileri okunamadı");
-    if (names.size() > 1) warn(row, "Birden fazla borçlu var; tutar borçlulara bölünmedi");
 
     QSet<QString> amounts;
     const QRegularExpression money(R"((?:ALACAK TUTARI İLE FAİZ VE GİDERLER|BORÇ MİKTARI)\s*:\s*([0-9][0-9.]*,[0-9]{2})\s*TL)");
@@ -172,7 +201,7 @@ std::vector<AccountingRow> match_accounting(std::vector<ParsedDocument> document
                         !recipient_key(row.recipient).contains(recipient_key(other.row.recipient))) {
                         folder_conflict=true;
                         warn(row,"Zarf ile evrak muhatapları çelişiyor; onaylı çıktıya alınamaz");
-                        warn(row,"Zarf muhatabı: "+QString::fromStdString(other.row.recipient));
+                        row.conflicting_recipient=other.row.recipient;
                         row.source_text+="\n\n--- ÇELİŞKİLİ ZARF (EŞLEŞTİRİLMEDİ) ---\n"+other.text.text.toStdString();
                     }
                     else candidates.push_back(&other);
@@ -194,7 +223,8 @@ std::vector<AccountingRow> match_accounting(std::vector<ParsedDocument> document
         }
         if (case_counts.value(QString::fromStdString(row.cells[office] + "|" + row.cells[case_number])) > 1)
             warn(row, "Aynı esas numarası tekrar ediyor; belge ve muhatapları ayrı inceleyin");
-        rows.push_back(std::move(row));
+        auto split=debtor_rows(row,parsed.debtors);
+        rows.insert(rows.end(),std::make_move_iterator(split.begin()),std::make_move_iterator(split.end()));
     }
     for (auto& parsed:documents) {
         if (!parsed.envelope) continue;
@@ -206,5 +236,32 @@ std::vector<AccountingRow> match_accounting(std::vector<ParsedDocument> document
         }
     }
     return rows;
+}
+
+std::vector<AccountingRow> split_legacy_debtors(const AccountingRow& original) {
+    auto row=original;
+    std::erase(row.warnings,"Birden fazla borçlu var; tutar borçlulara bölünmedi");
+    const std::string prefix="Zarf muhatabı: ";
+    std::erase_if(row.warnings,[&](const auto& warning) {
+        if(!warning.starts_with(prefix))return false;
+        row.conflicting_recipient=warning.substr(prefix.size()); return true;
+    });
+    if(row.cells[debtor].find(';')==std::string::npos && row.cells[debtor_id].find(';')==std::string::npos)
+        return {row};
+    const bool manual=std::any_of(row.evidence.begin(),row.evidence.end(),[](const auto& e){
+        return (e.column==debtor || e.column==debtor_id) && e.method=="manual-review";
+    });
+    IncomingDocument document; document.id=row.document_id; document.batch_id=row.batch_id;
+    const auto parsed=parse_document(document,{QString::fromStdString(row.source_text),{}});
+    QStringList names,ids;
+    for(const auto& person:parsed.debtors){names.append(person.name);ids.append(person.identifier);}
+    if(!manual && parsed.debtors.size()>1 && names.join("; ").toStdString()==row.cells[debtor] &&
+       ids.join("; ").toStdString()==row.cells[debtor_id]) {
+        row.approved=false;
+        return debtor_rows(row,parsed.debtors);
+    }
+    row.identity_conflict=true; row.approved=false;
+    warn(row,"Borçlu-kimlik eşleştirmesi güvenle ayrılamadı; kaynak belgeyi yeniden içe aktarın");
+    return {row};
 }
 } // namespace muz

@@ -24,7 +24,8 @@ target_link_libraries(muz_infrastructure PUBLIC muz_application PRIVATE Qt6::Cor
 target_include_directories(muz_infrastructure PRIVATE src/infrastructure)
 file(READ migrations/001_initial.sql MUZ_SCHEMA_V1)
 file(READ migrations/002_accounting.sql MUZ_SCHEMA_V2)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS migrations/001_initial.sql migrations/002_accounting.sql)
+file(READ migrations/003_debtor_rows.sql MUZ_SCHEMA_V3)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS migrations/001_initial.sql migrations/002_accounting.sql migrations/003_debtor_rows.sql)
 configure_file(src/infrastructure/schema.hpp.in generated/schema.hpp @ONLY)
 target_include_directories(muz_infrastructure PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 

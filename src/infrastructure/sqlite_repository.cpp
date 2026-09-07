@@ -8,6 +8,7 @@
 #include <QVariant>
 #include <QDateTime>
 #include <algorithm>
+#include <tuple>
 
 namespace muz {
 namespace {
@@ -74,7 +75,7 @@ void SqliteRepository::migrate() {
     if (!version.next()) throw Error(ErrorCode::storage);
     const auto current = version.value(0).toInt();
     version.finish();
-    if (current > 2 || current < 0) throw Error(ErrorCode::schema_version);
+    if (current > 3 || current < 0) throw Error(ErrorCode::schema_version);
     if (current == 0) {
         const auto statements = QString::fromUtf8(schema_v1).split("-- statement", Qt::SkipEmptyParts);
         for (const auto& statement : statements) query(db_, statement);
@@ -89,6 +90,10 @@ void SqliteRepository::migrate() {
         for (const auto& statement : QString::fromUtf8(schema_v2).split("-- statement", Qt::SkipEmptyParts))
             query(db_, statement);
     }
+    if (current < 3) {
+        for (const auto& statement : QString::fromUtf8(schema_v3).split("-- statement", Qt::SkipEmptyParts))
+            query(db_, statement);
+    }
     tx.commit();
 }
 
@@ -100,7 +105,7 @@ void SqliteRepository::reset_for_testing() {
             "audit_events", "review_issues", "incoming_documents", "case_records",
             "stored_files", "processing_batches", "schema_migrations"})
         query(db_, "DROP TABLE " + QString::fromLatin1(table));
-    for (const auto* schema : {schema_v1, schema_v2})
+    for (const auto* schema : {schema_v1, schema_v2, schema_v3})
         for (const auto& statement : QString::fromUtf8(schema).split("-- statement", Qt::SkipEmptyParts))
             query(db_, statement);
     tx.commit();
@@ -176,7 +181,9 @@ std::vector<AccountingRow> SqliteRepository::accounting_rows(const std::string& 
     auto rows = query(db_, "SELECT payload FROM accounting_rows WHERE batch_id=? ORDER BY id", {s(batch_id)});
     std::vector<AccountingRow> result;
     while (rows.next()) result.push_back(decode_row(rows.value(0).toString()));
-    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.source_path < b.source_path; });
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        return std::tie(a.source_path,a.document_id,a.debtor_index,a.id)<std::tie(b.source_path,b.document_id,b.debtor_index,b.id);
+    });
     return result;
 }
 
@@ -184,15 +191,34 @@ void SqliteRepository::save_accounting(const std::string& batch_id, const std::v
     Transaction tx(db_);
     const auto now = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
     for (const auto& row : rows) {
-        if (row.batch_id != batch_id || row.id != row.document_id) throw Error(ErrorCode::invalid_input);
+        if (row.batch_id != batch_id || row.id.empty() || row.document_id.empty()) throw Error(ErrorCode::invalid_input);
+        auto source=query(db_,"SELECT 1 FROM incoming_documents WHERE id=? AND batch_id=?",{s(row.document_id),s(batch_id)});
+        if(!source.next())throw Error(ErrorCode::invalid_input);
+        source.finish();
         const auto statement = review ?
-            "UPDATE accounting_rows SET payload=?,approved=? WHERE id=? AND batch_id=?" :
-            "INSERT INTO accounting_rows(payload,approved,id,batch_id) VALUES(?,?,?,?)";
-        auto write = query(db_, statement, {encode_row(row), row.approved ? 1 : 0, s(row.id), s(batch_id)});
+            "UPDATE accounting_rows SET payload=?,approved=? WHERE id=? AND batch_id=? AND document_id=?" :
+            "INSERT INTO accounting_rows(payload,approved,id,batch_id,document_id) VALUES(?,?,?,?,?)";
+        auto write = query(db_, statement, {encode_row(row), row.approved ? 1 : 0, s(row.id), s(batch_id),s(row.document_id)});
         if (write.numRowsAffected() != 1) throw Error(ErrorCode::storage);
         audit(db_, now, review ? (row.approved ? "accounting_row_approved" : "extracted_fields_edited") :
               "fields_extracted", row.id, batch_id);
         if (!review) audit(db_, now, row.envelope_id.empty() ? "matching_needs_review" : "matching_proposed", row.id, batch_id);
+    }
+    tx.commit();
+}
+
+void SqliteRepository::replace_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows) {
+    Transaction tx(db_);
+    query(db_,"DELETE FROM accounting_rows WHERE batch_id=?",{s(batch_id)});
+    const auto now=QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+    for(const auto& row:rows) {
+        if(row.batch_id!=batch_id)throw Error(ErrorCode::invalid_input);
+        auto source=query(db_,"SELECT 1 FROM incoming_documents WHERE id=? AND batch_id=?",{s(row.document_id),s(batch_id)});
+        if(!source.next())throw Error(ErrorCode::invalid_input);
+        source.finish();
+        query(db_,"INSERT INTO accounting_rows(id,document_id,batch_id,payload,approved) VALUES(?,?,?,?,?)",
+            {s(row.id),s(row.document_id),s(batch_id),encode_row(row),row.approved?1:0});
+        audit(db_,now,"debtor_rows_migrated",row.id,batch_id);
     }
     tx.commit();
 }
