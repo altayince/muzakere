@@ -1,0 +1,5 @@
+SYNTHETIC TEST DOCUMENT - NOT A REAL KEP ENVELOPE
+Reference: SYNTHETIC-0001
+Case number: 2026/123
+Sender: Example Test Office
+This file contains no client information. It tests import only.

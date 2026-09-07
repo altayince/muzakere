@@ -1,0 +1,49 @@
+name: Close Linked Issue
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-issue-on-merge:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close linked issue from branch number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const match = branch.match(/^(feature|bugfix)\/MUZ-(\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$/);
+
+            if (!match) {
+              core.setFailed(`Branch "${branch}" does not follow the MUZ ticket pattern.`);
+              return;
+            }
+
+            const issueNumber = Number(match[2]);
+
+            try {
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              });
+              if (issue.pull_request) {
+                core.setFailed('Branch ticket must reference an issue, not a pull request.');
+                return;
+              }
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                state: "closed",
+              });
+            } catch (error) {
+              core.setFailed(`Could not close issue #${issueNumber}: ${error.message}`);
+            }

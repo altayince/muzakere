@@ -1,0 +1,101 @@
+name: PR Policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, assigned, unassigned, ready_for_review]
+    branches:
+      - main
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  validate-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch naming and issue existence
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const match = branch.match(/^(feature|bugfix)\/MUZ-(\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$/);
+
+            if (!match) {
+              core.setFailed(`Branch "${branch}" must follow feature/MUZ-[ticket]-description or bugfix/MUZ-[ticket]-description.`);
+              return;
+            }
+
+            const issueNumber = Number(match[2]);
+
+            try {
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              });
+              if (issue.pull_request) {
+                core.setFailed(`Ticket #${issueNumber} is a pull request, not a task issue.`);
+              }
+            } catch (error) {
+              core.setFailed(`Branch "${branch}" references issue #${issueNumber}, but that issue does not exist.`);
+            }
+
+  validate-ownership:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate assignee and project
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.MUZ_PROJECT_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            let pr = null;
+            let assignees = [];
+            let projects = [];
+
+            for (let attempt = 1; attempt <= 6; attempt += 1) {
+              const result = await github.graphql(`
+                query($owner:String!, $repo:String!, $number:Int!) {
+                  repository(owner:$owner, name:$repo) {
+                    pullRequest(number:$number) {
+                      assignees(first: 20) { nodes { login } }
+                      projectItems(first: 20) { nodes { project { title } } }
+                      projectsV2(first: 20) { nodes { title } }
+                    }
+                  }
+                }
+              `, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: prNumber,
+              });
+
+              pr = result.repository.pullRequest;
+              assignees = pr.assignees.nodes.map(node => node.login);
+              projects = [
+                ...pr.projectItems.nodes.map(node => node.project?.title).filter(Boolean),
+                ...pr.projectsV2.nodes.map(node => node.title).filter(Boolean),
+              ];
+
+              if (assignees.includes('altayince') && projects.includes('MUZ')) {
+                break;
+              }
+
+              if (attempt < 6) {
+                await sleep(5000);
+              }
+            }
+
+            if (!assignees.includes('altayince')) {
+              core.setFailed('PR must be assigned to altayince.');
+              return;
+            }
+
+            if (!projects.includes('MUZ')) {
+              core.setFailed('PR must be added to the MUZ project.');
+              return;
+            }

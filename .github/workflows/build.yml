@@ -1,0 +1,44 @@
+name: Build and Test
+on:
+  push:
+    branches: [main, 'feature/**', 'bugfix/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-build-test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: .tools/Qt
+          key: qt-windows-6.8.3-mingw1310-base-v1
+      - name: Install toolchain
+        run: ./scripts/dev.ps1 Setup
+      - name: Configure and build
+        run: ./scripts/dev.ps1 Build
+      - name: Unit, integration and desktop smoke tests
+        run: ./scripts/dev.ps1 Test
+  linux-build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ qt6-base-dev libqt6sql6-sqlite
+      - name: Configure
+        run: cmake --preset dev
+      - name: Build
+        run: cmake --build --preset dev --parallel 4
+      - name: Unit, integration and desktop smoke tests
+        run: ctest --preset dev

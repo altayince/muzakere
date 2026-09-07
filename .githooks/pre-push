@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  case "$remote_ref" in
+    refs/heads/main)
+      if [ "${MUZ_ALLOW_MAIN_PUSH:-0}" != "1" ] && [ "${MUZ_ALLOW_MAIN_PUSH:-false}" != "true" ]; then
+        fail "Direct pushes to main are blocked. Create a feature/bugfix branch and open a PR."
+      fi
+      ;;
+  esac
+
+  case "$local_ref" in
+    refs/heads/*)
+      branch_name=${local_ref#refs/heads/}
+      if [ "$branch_name" != "main" ]; then
+        printf '%s\n' "$branch_name" | grep -Eq '^(feature|bugfix)/MUZ-[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$' || \
+          fail "Branch name must follow feature/MUZ-[ticket]-description or bugfix/MUZ-[ticket]-description."
+      fi
+      ;;
+  esac
+done
