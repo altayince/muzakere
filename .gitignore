@@ -1,0 +1,15 @@
+.tools/
+build/
+out/
+workspace/
+CMakeUserPresets.json
+.idea/
+.vs/
+*.user
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+aqtinstall.log
+.env
+__pycache__/
