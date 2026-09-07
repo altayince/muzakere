@@ -1,0 +1,666 @@
+Sen benim senior software architect + senior C++ developer eşim olarak çalışacaksın.
+
+Bir hukuk bürosu için KEP tabanlı dosya otomasyon sistemi geliştiriyoruz.
+
+Ben C++ geliştiricisiyim. Kodun tamamını birlikte geliştireceğiz. Bana tutorial seviyesinde oyuncak kod verme. Production-minded, modüler, test edilebilir ve sonradan büyütülebilir bir mimari kur.
+
+1. PROJENİN AMACI
+
+Hukuk bürosunda şu anda manuel yapılan KEP iş akışını mümkün olduğunca otomatikleştirmek istiyoruz.
+
+Beklenen uzun vadeli hacim yaklaşık 50.000 dosya/yıl.
+
+Ancak İLK SÜRÜM:
+
+* sadece local desktop application olacak
+* C++ kullanılacak
+* tek kullanıcı olacak
+* backend server olmayacak
+* web frontend olmayacak
+* PTT KEP API entegrasyonu olmayacak
+* e-imza otomasyonu olmayacak
+* harici cloud/API bağımlılığı mümkün olduğunca olmayacak
+
+Amaç önce gerçek bir avukatın günlük kullanımında sistemin gerçekten zaman kazandırıp kazandırmadığını doğrulamak.
+
+MVP işe yararsa daha sonra:
+
+* web application
+* backend
+* multi-user
+* merkezi database
+* PTT KEP entegrasyonu
+* otomatik gönderim
+* e-imza
+* audit log
+* yetkilendirme
+
+eklenecek.
+
+Bu yüzden bugünkü mimari gelecekte bu geçişe engel olmayacak şekilde tasarlanmalı, fakat şimdiden gereksiz enterprise complexity yaratılmamalı.
+
+2. MEVCUT MANUEL İŞ AKIŞI
+
+Bir KEP bildirimi geldiğinde genellikle iki ayrı dosya/parça bulunuyor:
+
+1. KEP zarfı / bildirim / envelope
+2. Asıl evrak / content
+
+Bu iki dosyanın birbirine ait olduğunun doğru şekilde eşleştirilmesi gerekiyor.
+
+Ardından belgelerden dava/dosya bilgileri çıkarılıyor.
+
+Örneğin mümkün olduğunda:
+
+* dosya/esas numarası
+* mahkeme
+* icra müdürlüğü
+* taraflar
+* borçlu
+* alacaklı
+* gönderici
+* tarih
+* tebliğ tarihi
+* belge tipi
+* ilgili referans numaraları
+* dosyadan çıkarılabilecek diğer önemli alanlar
+
+çıkarılacak.
+
+Daha sonra muhasebeye gönderilmek üzere Excel hazırlanıyor.
+
+Muhasebe dosyaları kontrol edip bir sonuç giriyor. Temel olarak:
+
+* var
+* yok
+
+gibi bir sonuç geliyor.
+
+Muhasebenin döndürdüğü Excel tekrar programa import edilecek.
+
+Program ilgili satırları kendi kayıtlarıyla eşleştirecek ve muhasebe sonucunu dosyaya işleyecek.
+
+Sonra bu sonuca göre uygun dilekçe oluşturulacak.
+
+Örneğin farklı “var/yok” durumlarında farklı dilekçe template’leri kullanılabilir.
+
+Template içinde:
+
+* dosya numarası
+* taraf
+* tarih
+* mahkeme
+* diğer case field’ları
+
+otomatik doldurulacak.
+
+Uzun vadede dilekçe + vekaletname tekrar KEP üzerinden gönderilecek ve e-imza kullanılacak.
+
+Ancak MVP’de SON GÖNDERİM MANUEL.
+
+3. MVP’DE İSTEDİĞİM AKIŞ
+
+Program açılır.
+
+Kullanıcı yeni batch oluşturabilir.
+
+Örneğin bir klasöre elle indirilmiş KEP dosyalarını programa import eder.
+
+Program:
+
+A. dosyaları tarar
+
+B. dosya tiplerini belirler
+
+C. KEP envelope ile gerçek belgeyi mümkün olduğu kadar otomatik eşleştirir
+
+D. eşleşmeye bir confidence score verir
+
+E. şüpheli eşleşmeleri kullanıcıya gösterir
+
+F. belgelerden gerekli metadata/case field’larını çıkarır
+
+G. kullanıcıya review ekranı sunar
+
+H. onaylanan kayıtları local database’e kaydeder
+
+I. muhasebeye gönderilecek Excel’i oluşturur
+
+Daha sonra:
+
+J. muhasebeden gelen Excel kullanıcı tarafından programa import edilir
+
+K. program satırları kendi case kayıtlarıyla eşleştirir
+
+L. “var/yok” ve diğer muhasebe alanlarını kayıtların üzerine işler
+
+M. ilgili dilekçe template’ini seçer
+
+N. doldurulmuş dilekçeyi oluşturur
+
+O. çıktı klasöründe ilgili dosyanın tüm çıktıları düzenli şekilde saklanır
+
+4. ÇOK ÖNEMLİ: HUMAN-IN-THE-LOOP
+
+Legal workflow olduğu için program sessizce tahmin yapıp yanlış belgeyi yanlış dosyaya bağlamamalı.
+
+Belirsiz durumlarda:
+
+NEVER GUESS SILENTLY.
+
+Örneğin:
+
+* iki envelope aynı belgeye uyuyorsa
+* esas numarası farklı okunuyorsa
+* PDF metadata ile belge içeriği çelişiyorsa
+* muhasebe Excel satırı tek bir case ile eşleşmiyorsa
+
+durum “Needs Review” olarak işaretlenecek.
+
+UI kullanıcıya problemi açıkça gösterecek.
+
+Otomatik işlem ile insan onayı birbirinden ayrılacak.
+
+5. DATA MODEL
+
+Başlangıç için sağlam bir domain modeli tasarla.
+
+Muhtemel entity’ler:
+
+CaseRecord
+
+IncomingDocument
+
+KepEnvelope
+
+DocumentPair
+
+ExtractedField
+
+AccountingExport
+
+AccountingResult
+
+PetitionTemplate
+
+GeneratedPetition
+
+ProcessingBatch
+
+ReviewIssue
+
+AuditEvent
+
+Ancak bunları körü körüne kullanma.
+
+Domain’i incele, gerekiyorsa daha iyi isimlendir veya sadeleştir.
+
+Her CaseRecord için stabil internal UUID olsun.
+
+External identifiers ayrı alanlar olsun.
+
+Dosya isimlerine database identifier olarak güvenme.
+
+6. DATABASE
+
+MVP local olduğu için SQLite tercih ediyorum.
+
+SQLite erişimini business logic’ten ayır.
+
+Repository/storage abstraction kullan.
+
+Ama aşırı generic ORM framework yazma.
+
+Schema migration mantığı olsun.
+
+İlk günden versioned schema kullan.
+
+7. DOSYA YÖNETİMİ
+
+Original imported files ASLA overwrite edilmemeli.
+
+Her import edilen file için mümkünse:
+
+* original filename
+* normalized filename
+* full path / managed path
+* size
+* SHA-256 hash
+* import timestamp
+* detected MIME/type
+* relationship to case
+
+sakla.
+
+Duplicate detection için hash kullanılabilir.
+
+Dosya organizasyonu örneğin:
+
+workspace/
+database/
+originals/
+batches/
+generated/
+exports/
+templates/
+logs/
+
+gibi olabilir.
+
+Daha iyi bir yapı öneriyorsan değiştir.
+
+8. DOCUMENT MATCHING
+
+Envelope-content matching sistemin kritik parçalarından biri.
+
+Matching sadece filename’e dayanmamalı.
+
+Kullanılabilecek sinyalleri modüler şekilde tasarla:
+
+* filename similarity
+* timestamps
+* identifiers inside envelope
+* identifiers inside actual document
+* case number
+* sender
+* recipient
+* reference IDs
+* document metadata
+* batch proximity
+* unique KEP metadata
+
+Matching sonucu örneğin:
+
+matched
+ambiguous
+unmatched
+
+olabilir.
+
+Ayrıca confidence score olsun.
+
+Matching algorithm strategy olarak ayrı component olmalı.
+
+9. DOCUMENT EXTRACTION
+
+PDF ve diğer belgelerden bilgi çıkarılması gerekiyor.
+
+İlk MVP’de mümkünse önce text-based PDF parsing yap.
+
+OCR’u ilk çözüm olarak kullanma.
+
+Scanned PDF varsa “OCR required / manual review” olarak işaretlenebilir.
+
+Extraction pipeline modüler olsun.
+
+Örneğin:
+
+DocumentLoader
+TextExtractor
+DocumentClassifier
+FieldExtractor
+FieldNormalizer
+FieldValidator
+
+gibi.
+
+Regex/parser tabanlı extraction ile başlanabilir.
+
+Mahkeme ve dosya formatlarına göre extractor’lar sonradan eklenebilmeli.
+
+Her extracted field için sadece value değil mümkünse:
+
+* source document
+* extraction method
+* confidence
+* original text/snippet
+
+sakla.
+
+10. EXCEL WORKFLOW
+
+Excel export/import çok önemli.
+
+Muhasebeye verilen Excel deterministik olmalı.
+
+Her satırda gizli olmayan ama stabil bir internal record ID bulunması çok faydalı olabilir.
+
+Örneğin:
+
+Record ID
+Dosya No
+Mahkeme
+Taraf
+Tarih
+…
+Muhasebe Sonucu
+
+Muhasebe Excel’i geri geldiğinde önce internal ID ile eşleştirmeye çalış.
+
+ID yoksa fallback matching yapılabilir fakat ambiguity kullanıcıya gösterilmeli.
+
+Import sırasında:
+
+* yeni satır
+* kayıp satır
+* duplicate ID
+* invalid value
+* case not found
+
+gibi problemler raporlanmalı.
+
+Excel component’i domain logic’ten bağımsız olsun.
+
+11. PETITION TEMPLATE SYSTEM
+
+Dilekçeleri hardcode etme.
+
+Template sistemi kur.
+
+Template’lerde placeholder kullanılabilsin.
+
+Örneğin:
+
+{{case_number}}
+{{court_name}}
+{{debtor_name}}
+{{creditor_name}}
+{{date}}
+
+vb.
+
+Template engine ilk aşamada basit olabilir.
+
+Conditional template selection desteklenmeli.
+
+Örneğin:
+
+accounting_result == “VAR”
+=> template A
+
+accounting_result == “YOK”
+=> template B
+
+Template render edilmeden önce required field validation yapılsın.
+
+Eksik kritik field varsa dilekçe üretme ve kullanıcıya göster.
+
+12. UI
+
+Desktop UI sade ve operasyon odaklı olsun.
+
+Fancy UI istemiyorum.
+
+İş akışını hızlandırmalı.
+
+Temel ekranlar:
+
+Dashboard / batch list
+
+Import Documents
+
+Matching Review
+
+Extracted Fields Review
+
+Cases
+
+Accounting Export
+
+Accounting Import Review
+
+Petition Generation
+
+Problems / Needs Review
+
+Settings / Templates
+
+Kullanıcı mümkün olduğunca batch halinde yüzlerce dosyayla çalışabilmeli.
+
+Tek tek popup açan kötü UX tasarlama.
+
+Keyboard-friendly UI tercih et.
+
+13. C++ STACK
+
+Modern C++ kullan.
+
+Minimum C++20.
+
+Build system: CMake.
+
+UI için Qt 6 mantıklı görünüyor.
+
+Database SQLite.
+
+Test framework olarak Catch2 veya GoogleTest kullanılabilir.
+
+Logging için spdlog mantıklı olabilir.
+
+PDF parsing için uygun, aktif geliştirilen ve lisansı problem yaratmayan library seç.
+
+Excel için .xlsx okuyup yazabilen uygun C++ library seç.
+
+Ancak dependency eklemeden önce:
+
+* neden gerekli olduğunu
+* lisansını
+* maintenance durumunu
+* alternative’i
+
+kısaca değerlendir.
+
+Dependency sayısını gereksiz büyütme.
+
+14. CODE QUALITY
+
+Şunlara dikkat et:
+
+RAII
+
+smart pointers
+
+clear ownership
+
+value semantics mümkün olduğunca
+
+exceptions/error handling için tutarlı strateji
+
+filesystem abstraction gereken yerlerde
+
+dependency injection fakat framework değil
+
+unit-testable business logic
+
+UI kodunun business logic’e gömülmemesi
+
+database query’lerinin UI katmanında olmaması
+
+global mutable state olmaması
+
+15. PRIVACY / SECURITY
+
+Legal documents hassas veri içeriyor.
+
+MVP offline/local olacak.
+
+Program gereksiz network connection yapmamalı.
+
+Log’lara full document content veya gereksiz kişisel veri basma.
+
+Error loglarında mümkün olduğunca internal record ID kullan.
+
+Original document integrity korunmalı.
+
+Hash’lerle değişiklik kontrol edilebilir.
+
+16. AUDITABILITY
+
+Legal workflow olduğu için hangi işlemin ne zaman yapıldığını bilmek önemli.
+
+En azından:
+
+* import
+* matching
+* manual matching override
+* extracted-field edit
+* accounting import
+* template selection
+* petition generation
+
+audit event olarak tutulabilsin.
+
+MVP için append-only basit audit table yeterlidir.
+
+17. TEST STRATEGY
+
+Unit tests:
+
+* filename/identifier normalization
+* case number parser
+* matching score
+* Excel import matching
+* template rendering
+* validation
+
+Integration tests:
+
+* DB repository
+* batch import
+* sample PDF extraction
+* accounting round-trip
+
+Test fixture klasörü oluştur.
+
+Gerçek müşteri belgelerini repository’ye koyma.
+
+Synthetic/anonymized sample files kullan.
+
+18. FUTURE ARCHITECTURE
+
+Bugünkü MVP’yi microservice yapma.
+
+Ama domain/use-case logic’i UI’dan ayır ki daha sonra:
+
+Qt Desktop UI
+
+yerine
+
+Web Backend/API
+
+bağlanabilsin.
+
+Long-term target kabaca:
+
+Frontend
+|
+Backend API
+|
+Application/Domain Layer
+|
+Database / Object Storage / KEP Adapter / e-Signature Adapter
+
+olabilir.
+
+Bugün yalnızca:
+
+Qt UI
+|
+Application/Domain Layer
+|
+SQLite / Local Files
+
+olsun.
+
+19. YAPMAMAN GEREKENLER
+
+Şimdilik:
+
+PTT KEP API yazma.
+
+PTT’nin endpoint’lerini uydurma.
+
+e-imza entegrasyonu yazma.
+
+Selenium/browser automation yazma.
+
+Cloud deploy etme.
+
+Docker/Kubernetes ekleme.
+
+Authentication sistemi kurma.
+
+Multi-tenant architecture kurma.
+
+Microservices yapma.
+
+LLM API bağlama.
+
+OCR servisi bağlama.
+
+Bunlar MVP doğrulandıktan sonra gelecek.
+
+20. ÇALIŞMA ŞEKLİMİZ
+
+Bu projeyi tek seferde 20.000 satır kod basarak yapma.
+
+Önce repository’yi incele.
+
+Eğer repo boşsa ilk önce sağlam skeleton oluştur.
+
+Her aşamada çalışan software bırak.
+
+Küçük, mantıklı increment’lerle ilerle.
+
+Bir feature yazınca:
+
+* compile et
+* testleri çalıştır
+* hataları düzelt
+* ardından devam et
+
+Ben senden kod istediğimde sadece bana kod örneği verme; mümkünse repository üzerinde gerçek değişiklik yap.
+
+Dosyaları kendin oluştur.
+
+CMake’i çalışır halde tut.
+
+Broken build bırakma.
+
+21. İLK GÖREV
+
+Şimdi ilk olarak:
+
+1. Bu specification’ı değerlendir.
+2. MVP için önerdiğin architecture’ı netleştir.
+3. Repository klasör yapısını tasarla.
+4. Kullanacağımız temel dependency’leri seç.
+5. Domain model’in ilk halini belirle.
+6. SQLite schema v1’i tasarla.
+7. Application use-case’leri listele.
+8. Sonra çalışan project skeleton’ını oluştur.
+9. Minimal Qt uygulaması açılabilsin.
+10. SQLite database initialise edilsin.
+11. CMake configure/build başarılı olsun.
+12. İlk unit test çalışsın.
+
+Uzun teorik rapor yazıp durma.
+
+Kararları kısa açıkla ve ardından repository üzerinde implementasyona geç.
+
+Öncelik sırası:
+
+CORRECTNESS
+DATA INTEGRITY
+AUDITABILITY
+MAINTAINABILITY
+USABILITY
+PERFORMANCE
+
+50.000 dosya/yıl hacmini rahat karşılayacak şekilde düşün fakat premature optimization yapma.
+
+İlk milestone:
+
+“Belgeleri local klasörden import et → hash’le → database’e kaydet → batch ekranında göster.”
+
+Bunu tamamlamadan extraction, Excel veya petition generation’a geçme.

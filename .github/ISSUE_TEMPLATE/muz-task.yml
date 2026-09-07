@@ -1,0 +1,28 @@
+name: MUZ Task
+description: Create a MUZ issue that is assigned to altayince by default.
+title: "[MUZ-] "
+assignees:
+  - altayince
+labels:
+  - MUZ
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for work that follows the MUZ issue -> branch -> PR flow.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should be changed?
+      placeholder: Describe the task clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: What does done look like?
+      placeholder: List the expected outcomes.
+    validations:
+      required: true
