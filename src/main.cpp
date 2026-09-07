@@ -9,6 +9,8 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace {
 std::filesystem::path path(const QString& value) {
@@ -26,6 +28,8 @@ int main(int argc, char* argv[]) {
     parser.addHelpOption();
     parser.addOption({"workspace", "Local workspace directory", "path"});
     parser.addOption({"smoke-test", "Exercise desktop startup and background import using temporary synthetic data"});
+    parser.addOption({"import-zip", "Import a ZIP and prepare accounting rows without opening the UI", "path"});
+    parser.addOption({"export-draft", "Export the imported rows as a clearly marked review draft", "xlsx"});
     parser.process(app);
     const bool smoke = parser.isSet("smoke-test");
     QTemporaryDir temporary;
@@ -35,6 +39,16 @@ int main(int argc, char* argv[]) {
     try {
         if (smoke && !temporary.isValid()) return 2;
         muz::LocalWorkspace workspace(path(root));
+        if (parser.isSet("import-zip")) {
+            const auto batch=workspace.import_archive(path(parser.value("import-zip")));
+            const auto rows=workspace.prepare_accounting(batch.batch.id);
+            if(parser.isSet("export-draft")) workspace.export_accounting(batch.batch.id,path(parser.value("export-draft")),true);
+            QFile output; output.open(stdout,QIODevice::WriteOnly);
+            output.write(QJsonDocument(QJsonObject{{"batch_id",QString::fromStdString(batch.batch.id)},
+                {"imported_documents",static_cast<int>(batch.batch.imported_count)},
+                {"accounting_rows",static_cast<int>(rows.size())}}).toJson());
+            return 0;
+        }
         muz::MainWindow window(workspace);
         window.show();
         QTimer poll;
@@ -56,11 +70,11 @@ int main(int argc, char* argv[]) {
         }
         return app.exec();
     } catch (const muz::Error& error) {
-        if (!smoke) QMessageBox::critical(nullptr, QStringLiteral("Çalışma alanı açılamadı"),
+        if (!smoke && !parser.isSet("import-zip")) QMessageBox::critical(nullptr, QStringLiteral("Çalışma alanı açılamadı"),
             QStringLiteral("Hata kodu: ") + QString::fromUtf8(error.what()));
         return 1;
     } catch (...) {
-        if (!smoke) QMessageBox::critical(nullptr, QStringLiteral("Uygulama başlatılamadı"), QStringLiteral("Beklenmeyen başlatma hatası."));
+        if (!smoke && !parser.isSet("import-zip")) QMessageBox::critical(nullptr, QStringLiteral("Uygulama başlatılamadı"), QStringLiteral("Beklenmeyen başlatma hatası."));
         return 1;
     }
 }

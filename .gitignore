@@ -13,3 +13,8 @@ CMakeUserPresets.json
 aqtinstall.log
 .env
 __pycache__/
+*.zip
+*.xlsx
+*.xls
+*.pdf
+!tests/fixtures/**

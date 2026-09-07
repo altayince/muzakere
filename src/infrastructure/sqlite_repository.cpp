@@ -1,10 +1,13 @@
 #include "sqlite_repository.hpp"
 #include "qt_paths.hpp"
 #include "schema.hpp"
+#include "accounting_adapters.hpp"
 
 #include <QSqlQuery>
 #include <QUuid>
 #include <QVariant>
+#include <QDateTime>
+#include <algorithm>
 
 namespace muz {
 namespace {
@@ -71,14 +74,20 @@ void SqliteRepository::migrate() {
     if (!version.next()) throw Error(ErrorCode::storage);
     const auto current = version.value(0).toInt();
     version.finish();
-    if (current > 1 || current < 0) throw Error(ErrorCode::schema_version);
+    if (current > 2 || current < 0) throw Error(ErrorCode::schema_version);
     if (current == 0) {
         const auto statements = QString::fromUtf8(schema_v1).split("-- statement", Qt::SkipEmptyParts);
         for (const auto& statement : statements) query(db_, statement);
     } else {
         auto check = query(db_, "SELECT version FROM schema_migrations ORDER BY version");
-        if (!check.next() || check.value(0).toInt() != 1 || check.next()) throw Error(ErrorCode::schema_version);
+        for (int expected = 1; expected <= current; ++expected)
+            if (!check.next() || check.value(0).toInt() != expected) throw Error(ErrorCode::schema_version);
+        if (check.next()) throw Error(ErrorCode::schema_version);
         check.finish();
+    }
+    if (current < 2) {
+        for (const auto& statement : QString::fromUtf8(schema_v2).split("-- statement", Qt::SkipEmptyParts))
+            query(db_, statement);
     }
     tx.commit();
 }
@@ -91,6 +100,12 @@ void SqliteRepository::save(ImportResult& result) {
          QVariant::fromValue(static_cast<qlonglong>(batch.imported_count)), 0,
          QVariant::fromValue(static_cast<qlonglong>(batch.issue_count))});
     audit(db_, batch.created_at, "batch_imported", batch.id, batch.id);
+    if (!result.archive_name.empty()) {
+        query(db_, "INSERT INTO batch_archives VALUES(?,?,?,?,?)", {s(batch.id), s(result.archive_name),
+            s(result.archive_file.sha256), s(result.archive_file.managed_path),
+            QVariant::fromValue(static_cast<qlonglong>(result.archive_file.size))});
+        audit(db_, batch.created_at, "zip_imported", batch.id, batch.id);
+    }
     batch.duplicate_count = 0;
     for (auto& doc : result.documents) {
         if (!valid_sha256(doc.file.sha256)) throw Error(ErrorCode::integrity);
@@ -141,5 +156,50 @@ std::vector<ReviewIssue> SqliteRepository::issues(const std::string& batch_id) {
     while (rows.next()) result.push_back({rows.value(0).toString().toStdString(), rows.value(1).toString().toStdString(),
         rows.value(2).toString().toStdString(), rows.value(3).toString().toStdString()});
     return result;
+}
+
+std::vector<AccountingRow> SqliteRepository::accounting_rows(const std::string& batch_id) {
+    auto rows = query(db_, "SELECT payload FROM accounting_rows WHERE batch_id=? ORDER BY id", {s(batch_id)});
+    std::vector<AccountingRow> result;
+    while (rows.next()) result.push_back(decode_row(rows.value(0).toString()));
+    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.source_path < b.source_path; });
+    return result;
+}
+
+void SqliteRepository::save_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows, bool review) {
+    Transaction tx(db_);
+    const auto now = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+    for (const auto& row : rows) {
+        if (row.batch_id != batch_id || row.id != row.document_id) throw Error(ErrorCode::invalid_input);
+        const auto statement = review ?
+            "UPDATE accounting_rows SET payload=?,approved=? WHERE id=? AND batch_id=?" :
+            "INSERT INTO accounting_rows(payload,approved,id,batch_id) VALUES(?,?,?,?)";
+        auto write = query(db_, statement, {encode_row(row), row.approved ? 1 : 0, s(row.id), s(batch_id)});
+        if (write.numRowsAffected() != 1) throw Error(ErrorCode::storage);
+        audit(db_, now, review ? (row.approved ? "accounting_row_approved" : "extracted_fields_edited") :
+              "fields_extracted", row.id, batch_id);
+        if (!review) audit(db_, now, row.envelope_id.empty() ? "matching_needs_review" : "matching_proposed", row.id, batch_id);
+    }
+    tx.commit();
+}
+
+std::string SqliteRepository::record_export(const std::string& batch_id, const std::filesystem::path& path,
+                                    const std::string& sha256, std::size_t count, bool draft) {
+    Transaction tx(db_);
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+    const auto now = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+    query(db_, "INSERT INTO accounting_exports(id,batch_id,created_at,output_path,sha256,row_count,is_draft) VALUES(?,?,?,?,?,?,?)", {s(id),s(batch_id),s(now),qpath(path),s(sha256),
+          QVariant::fromValue(static_cast<qlonglong>(count)),draft ? 1 : 0});
+    audit(db_, now, "accounting_export_prepared", id, batch_id);
+    tx.commit();
+    return id;
+}
+void SqliteRepository::complete_export(const std::string& id, const std::string& batch_id, bool draft) {
+    Transaction tx(db_);
+    auto result=query(db_,"UPDATE accounting_exports SET status='published' WHERE id=? AND batch_id=? AND status='prepared'",{s(id),s(batch_id)});
+    if(result.numRowsAffected()!=1) throw Error(ErrorCode::storage);
+    audit(db_,QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString(),
+          draft ? "accounting_draft_exported":"accounting_exported",id,batch_id);
+    tx.commit();
 }
 } // namespace muz

@@ -13,6 +13,11 @@ public:
     std::vector<ProcessingBatch> batches() override;
     std::vector<IncomingDocument> documents(const std::string& batch_id) override;
     std::vector<ReviewIssue> issues(const std::string& batch_id) override;
+    std::vector<AccountingRow> accounting_rows(const std::string& batch_id);
+    void save_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows, bool review);
+    std::string record_export(const std::string& batch_id, const std::filesystem::path& path,
+                       const std::string& sha256, std::size_t count, bool draft);
+    void complete_export(const std::string& id, const std::string& batch_id, bool draft);
 private:
     QSqlDatabase db_;
     void migrate();

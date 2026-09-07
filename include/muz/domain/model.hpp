@@ -59,6 +59,8 @@ struct ImportResult {
     ProcessingBatch batch;
     std::vector<IncomingDocument> documents;
     std::vector<ReviewIssue> issues;
+    std::string archive_name;
+    StoredFile archive_file;
 };
 
 // Populated only by a future explicit review/approval use case.
