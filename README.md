@@ -26,8 +26,10 @@ The default workspace is `%LOCALAPPDATA%/Muzakere/Muzakere/workspace`; pass
 
 For the ZIP-to-Excel workflow, choose **ZIP arşivi al ve Excel satırlarını hazırla**.
 The **Excel hazırlama / inceleme** tab shows editable fields, warnings, the source
-PDF text and proposed envelope. Select rows and enter the service date if known;
-dates in ZIP names or document headers are not assumed to be service dates.
+PDF text and proposed envelope. New rows temporarily use the computer's local
+date when prepared as the service date. You can edit it; saved rows keep their
+date when reopened or exported. TODO (MUZ-5): obtain this date from the KEP record
+during KEP integration, replacing the temporary default.
 **Seçilenleri kaydet** saves corrections without approval. **Seçilenleri onayla**
 records your explicit review. **Onaylı Excel** exports approved rows; **İnceleme
 Excel’i** exports all rows as a visibly marked draft. Conflicting envelope/recipient

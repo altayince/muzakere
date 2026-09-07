@@ -12,8 +12,12 @@ one-off Python-generated workbook or external API is part of the runtime.
    It is crash isolation, not an OS security sandbox. No OCR, links, scripts,
    messages or instructions in PDFs are executed by the application.
 3. Parse labelled UYAP fields into source-backed proposals. Turkish casing works
-   without ICU. Money is validated as integer cents; IDs/IBAN stay text. Service
-   dates require an explicit labelled value or manual entry, never a filename date.
+   without ICU. Money is validated as integer cents; IDs/IBAN stay text. New rows
+   temporarily use the computer's local date at preparation as the service date,
+   recorded separately from PDF evidence. It remains editable and is persisted;
+   reopening, preparing again or exporting does not refresh saved dates.
+   **TODO (MUZ-5): replace this temporary default with the service date from the
+   KEP record during KEP integration.** ZIP filenames do not supply this date.
 4. Match envelopes by parent group plus case number, then compare office and
    recipient where available. Different recipients override the same folder/case.
    Unmatched or ambiguous envelopes stay visible. No automatic case creation,
