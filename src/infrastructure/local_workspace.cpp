@@ -114,6 +114,15 @@ std::vector<AccountingRow> LocalWorkspace::prepare_accounting(const std::string&
     }
     if (parsed.empty()) throw Error(ErrorCode::invalid_input);
     auto rows = match_accounting(std::move(parsed));
+    // TODO(MUZ-5): KEP integration must replace this temporary local-date default
+    // with the service date supplied by the KEP record.
+    const auto temporary_service_date = QDate::currentDate().toString("dd.MM.yyyy").toStdString();
+    for (auto& row : rows) {
+        row.cells[service_date] = temporary_service_date;
+        std::erase(row.warnings, "Tebliğ tarihi belgede yok; kullanıcı girişi gerekli");
+        row.evidence.push_back({service_date, {}, temporary_service_date,
+            "temporary-local-date-until-kep", 0.0});
+    }
     repository.save_accounting(batch_id,rows,false);
     return rows;
 }

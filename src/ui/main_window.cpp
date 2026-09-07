@@ -96,9 +96,10 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     auto* export_button=button(QStringLiteral("Onaylı Excel"));
     review_layout->addLayout(toolbar);
     auto* date_layout=new QHBoxLayout;
-    date_=new QLineEdit(review); date_->setPlaceholderText(QStringLiteral("Tebliğ tarihi: gg.aa.yyyy (isteğe bağlı)"));
+    date_=new QLineEdit(review); date_->setPlaceholderText(QStringLiteral("Tebliğ tarihini değiştir: gg.aa.yyyy"));
     auto* apply_date=new QPushButton(QStringLiteral("Tarihi seçilenlere uygula"),review); actions_.push_back(apply_date);
     date_layout->addWidget(date_); date_layout->addWidget(apply_date); review_layout->addLayout(date_layout);
+    review_layout->addWidget(new QLabel(QStringLiteral("Tebliğ tarihi şimdilik satırların hazırlandığı günün tarihiyle doldurulur; düzenleyebilirsiniz."),review));
     review_layout->addWidget(new QLabel(QStringLiteral("Alanları düzenleyin, kaynak metni ve uyarıları inceleyin. Onay, seçili satırların uyarılarıyla birlikte kabulüdür."),review));
     auto* review_splitter=new QSplitter(Qt::Vertical,review);
     accounting_=new QTableWidget(review_splitter);
@@ -142,7 +143,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-3 — ZIP import, PDF review and accounting Excel export\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-5 — Geçici tebliğ tarihi\n"
+        "Yeni satırlarda bugünün tarihi kullanılır. KEP entegrasyonunda tarih KEP'ten alınacak.\n\n"
+        "MUZ-3 — ZIP import, PDF review and accounting Excel export\n"
         "ZIP alımı, yerel PDF okuma, kaynak metinle toplu inceleme ve 11 sütunlu Excel çıktısı.\n\n"
         "MUZ-1 — Desktop skeleton and document import milestone\n"
         "Yerel klasör importu, SHA-256 arşivi, SQLite batch kayıtları ve inceleme listesi."), tabs);

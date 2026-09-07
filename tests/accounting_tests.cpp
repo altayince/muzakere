@@ -20,6 +20,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <QApplication>
+#include <QDate>
 
 namespace {
 QString content() {
@@ -142,12 +143,15 @@ TEST_CASE("ZIP to reviewed Excel round trip preserves IDs, text cells and approv
         const auto result=workspace.import_archive(muz::native_path(archive)); id=result.batch.id;
         REQUIRE(result.batch.imported_count==2);
         REQUIRE(result.documents[0].source_path.find("input.zip!/")!=std::string::npos);
+        const auto preparation_date=QDate::currentDate().toString("dd.MM.yyyy");
         auto rows=workspace.prepare_accounting(id);
         REQUIRE(rows.size()==1); row_id=rows[0].id;
+        REQUIRE(QString::fromStdString(rows[0].cells[muz::service_date])==preparation_date);
         REQUIRE(rows[0].cells[muz::debtor]=="ÖRNEK BORÇLU");
         REQUIRE_THROWS_AS(workspace.export_accounting(id,muz::native_path(temp.path()+"/unapproved.xlsx"),false),muz::Error);
         workspace.export_accounting(id,muz::native_path(temp.path()+"/draft.xlsx"),true);
         QXlsx::Document draft(temp.path()+"/draft.xlsx"); REQUIRE(draft.load());
+        REQUIRE(draft.read(2,2).toString()==preparation_date);
         REQUIRE(draft.read(2,11).toString().contains(QStringLiteral("İNCELEME TASLAĞI")));
         rows[0].cells[muz::service_date]="31.08.2026";
         rows[0].cells[muz::notes]="=HYPERLINK(\"https://example.invalid\")";
@@ -158,9 +162,11 @@ TEST_CASE("ZIP to reviewed Excel round trip preserves IDs, text cells and approv
         REQUIRE(book.read(1,7).toString()=="Borçlu TCKN/VKN");
         REQUIRE(book.read(2,7).toString()=="00000000000");
         REQUIRE(book.read(2,5).toDouble()==1234.56);
+        REQUIRE(book.read(2,2).toString()=="31.08.2026");
         REQUIRE(book.read(2,11).toString().startsWith("=HYPERLINK"));
         REQUIRE(book.selectSheet("Kaynaklar")); REQUIRE(book.read(2,2).toString().toStdString()==row_id);
         REQUIRE(workspace.prepare_accounting(id)[0].approved);
+        REQUIRE(workspace.prepare_accounting(id)[0].cells[muz::service_date]=="31.08.2026");
         const auto original=workspace.documents(id).front().file.managed_path;
         write_file(root+'/'+QString::fromStdString(original),"tampered");
         REQUIRE_THROWS_AS(workspace.export_accounting(id,muz::native_path(temp.path()+"/tampered.xlsx"),false),muz::Error);
