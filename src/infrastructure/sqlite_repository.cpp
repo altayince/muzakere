@@ -92,6 +92,20 @@ void SqliteRepository::migrate() {
     tx.commit();
 }
 
+void SqliteRepository::reset_for_testing() {
+    // Reset only this workspace's database, atomically. DROP also removes the
+    // append-only audit triggers; the schema scripts recreate them before commit.
+    Transaction tx(db_);
+    for (const auto* table : {"accounting_exports", "accounting_rows", "batch_archives",
+            "audit_events", "review_issues", "incoming_documents", "case_records",
+            "stored_files", "processing_batches", "schema_migrations"})
+        query(db_, "DROP TABLE " + QString::fromLatin1(table));
+    for (const auto* schema : {schema_v1, schema_v2})
+        for (const auto& statement : QString::fromUtf8(schema).split("-- statement", Qt::SkipEmptyParts))
+            query(db_, statement);
+    tx.commit();
+}
+
 void SqliteRepository::save(ImportResult& result) {
     Transaction tx(db_);
     auto& batch = result.batch;

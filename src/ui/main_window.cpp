@@ -14,6 +14,8 @@
 #include <QPlainTextEdit>
 #include <QLineEdit>
 #include <QHBoxLayout>
+#include <QMessageBox>
+#include <algorithm>
 
 namespace muz {
 namespace {
@@ -58,6 +60,11 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     layout->addWidget(import_);
     auto* zip_button = new QPushButton(QStringLiteral("ZIP arşivi al ve Excel satırlarını hazırla…"),central);
     layout->addWidget(zip_button); actions_.push_back(zip_button);
+    auto* reset_button = new QPushButton(QStringLiteral("TEST — Veritabanını sıfırla"), central);
+    reset_button->setObjectName("resetDatabaseForTesting");
+    reset_button->setToolTip(QStringLiteral("Tüm işlem gruplarını, satırları, onayları ve işlem geçmişini siler."));
+    layout->addWidget(reset_button); actions_.push_back(reset_button);
+    connect(reset_button, &QPushButton::clicked, this, &MainWindow::resetDatabaseForTesting);
     connect(zip_button,&QPushButton::clicked,this,[this] {
         const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("Tebligat arşivi seçin"),{},"ZIP (*.zip)");
         if (!file.isEmpty()) importArchive(native(file));
@@ -143,7 +150,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-5 — Geçici tebliğ tarihi\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-7 — Test sıfırlama ve eski kayıtların tebliğ tarihi\n"
+        "Test düğmesi veritabanını temizler. Eski boş tarihler bugünün tarihiyle doldurulur ve yeniden onay bekler.\n\n"
+        "MUZ-5 — Geçici tebliğ tarihi\n"
         "Yeni satırlarda bugünün tarihi kullanılır. KEP entegrasyonunda tarih KEP'ten alınacak.\n\n"
         "MUZ-3 — ZIP import, PDF review and accounting Excel export\n"
         "ZIP alımı, yerel PDF okuma, kaynak metinle toplu inceleme ve 11 sütunlu Excel çıktısı.\n\n"
@@ -285,7 +294,21 @@ void MainWindow::reviewSelected(bool approve) {
         }
         if (edits.empty()) {status_->setText(QStringLiteral("Önce incelemek istediğiniz satırları seçin."));return;}
         workspace_.review_accounting(selected_batch_,edits);
-        accounting_rows_=workspace_.accounting_rows(selected_batch_);showAccounting();
+        // Refresh selected records only: other rows may contain unsaved edits.
+        const auto saved=workspace_.accounting_rows(selected_batch_);
+        const QSignalBlocker blocker(accounting_);
+        for (const auto& edit : edits) {
+            const auto record=std::find_if(saved.begin(),saved.end(),[&](const auto& value){return value.id==edit.id;});
+            if (record==saved.end()) throw Error(ErrorCode::storage);
+            for (std::size_t i=0; i<accounting_rows_.size(); ++i) {
+                if (accounting_rows_[i].id!=edit.id) continue;
+                accounting_rows_[i]=*record;
+                accounting_->item(static_cast<int>(i),0)->setText(record->approved?QStringLiteral("Onaylı"):QStringLiteral("Onay bekliyor"));
+                QStringList warnings; for(const auto& warning:record->warnings)warnings.append(s(warning));
+                if(!record->recipient.empty())warnings.prepend(QStringLiteral("Muhatap: ")+s(record->recipient));
+                accounting_->item(static_cast<int>(i),11)->setText(warnings.join("; "));
+            }
+        }
         status_->setText(approve?QStringLiteral("Seçili satırlar onaylandı; Onaylı Excel ile dışa aktarabilirsiniz."):
             QStringLiteral("Seçili satırlardaki değişiklikler kaydedildi."));
     } catch(const Error&){status_->setText(QStringLiteral("Kayıt başarısız. Çelişkili zarf/muhatap satırlarını onaylamayın. Daire, esas, borçlu, Evet/Hayır, tarih (gg.aa.yyyy) ve tutarı (1234,56) kontrol edin."));}
@@ -303,6 +326,23 @@ void MainWindow::exportExcel(bool draft) {
         workspace_.export_accounting(selected_batch_,native(output),draft);
         status_->setText(QStringLiteral("Excel oluşturuldu: ")+output);
     } catch(const Error&){status_->setText(QStringLiteral("Excel oluşturulamadı. Yeni bir .xlsx dosya adı kullanın; onaylı çıktı için önce satırları onaylayın."));}
+}
+
+void MainWindow::resetDatabaseForTesting() {
+    if (busy()) return;
+    const auto answer = QMessageBox::warning(this, QStringLiteral("Test veritabanını sıfırla"),
+        QStringLiteral("Tüm işlem grupları, belgelerin veritabanı kayıtları, Excel satırları, onaylar ve işlem geçmişi silinecek. "
+                       "Kaydedilmemiş değişiklikler de silinir. Kaynak ZIP/PDF ve oluşturulmuş Excel dosyaları diskte kalır.\n\n"
+                       "Veritabanı sıfırlansın mı?"), QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
+    setBusy(true);
+    try {
+        workspace_.reset_database_for_testing();
+        selected_batch_.clear(); accounting_rows_.clear(); showAccounting(); date_->clear();
+        refresh();
+        status_->setText(QStringLiteral("Test veritabanı sıfırlandı. ZIP'i yeniden içe aktarabilirsiniz."));
+    } catch (const Error& error) { status_->setText(errorText(error.what())); }
+    setBusy(false);
 }
 
 bool MainWindow::hasUnsavedEdits() const {

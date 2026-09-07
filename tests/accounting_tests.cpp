@@ -21,6 +21,11 @@
 #include <QThread>
 #include <QApplication>
 #include <QDate>
+#include <QMessageBox>
+#include <QFileDialog>
+#include <QTimer>
+#include <algorithm>
+#include "sqlite_repository.hpp"
 
 namespace {
 QString content() {
@@ -210,4 +215,130 @@ TEST_CASE("Schema v1 upgrades without losing preexisting batches", "[integration
     muz::LocalWorkspace workspace(muz::native_path(temp.path()+"/workspace"));
     REQUIRE(workspace.batches().size()==1); REQUIRE(workspace.batches()[0].id=="existing");
     REQUIRE(workspace.accounting_rows("existing").empty());
+}
+
+TEST_CASE("Legacy empty service dates are persisted and require fresh approval", "[integration][accounting]") {
+    QTemporaryDir temp; REQUIRE(temp.isValid());
+    const auto root=temp.path()+"/workspace";
+    const auto archive=temp.path()+"/input.zip";
+    write_file(archive,zip({{"a/content.pdf",pdf(content())}}));
+    muz::LocalWorkspace workspace(muz::native_path(root));
+    const auto batch=workspace.import_archive(muz::native_path(archive)).batch.id;
+    auto old=workspace.prepare_accounting(batch);
+    old[0].cells[muz::service_date].clear(); old[0].approved=true;
+    std::erase_if(old[0].evidence,[](const auto& field){return field.column==muz::service_date;});
+    {
+        muz::SqliteRepository repository(muz::native_path(root+"/database/muzakere.sqlite3"));
+        repository.save_accounting(batch,old,true); // Reproduce a batch saved before MUZ-5.
+    }
+    const auto today=QDate::currentDate().toString("dd.MM.yyyy");
+    auto loaded=workspace.accounting_rows(batch);
+    REQUIRE(QString::fromStdString(loaded[0].cells[muz::service_date])==today);
+    REQUIRE_FALSE(loaded[0].approved);
+    REQUIRE_THROWS_AS(workspace.export_accounting(batch,muz::native_path(temp.path()+"/not-reviewed.xlsx"),false),muz::Error);
+    loaded[0].approved=true; workspace.review_accounting(batch,loaded);
+    workspace.export_accounting(batch,muz::native_path(temp.path()+"/reviewed.xlsx"),false);
+    QXlsx::Document book(temp.path()+"/reviewed.xlsx"); REQUIRE(book.load());
+    REQUIRE(book.read(2,2).toString()==today);
+    loaded[0].cells[muz::service_date].clear(); loaded[0].approved=false;
+    workspace.review_accounting(batch,loaded);
+    REQUIRE(workspace.accounting_rows(batch)[0].cells[muz::service_date].empty());
+    REQUIRE(workspace.prepare_accounting(batch)[0].cells[muz::service_date].empty());
+}
+
+TEST_CASE("Desktop approval retains other edits and exports the displayed service date", "[integration][desktop]") {
+    QTemporaryDir temp; REQUIRE(temp.isValid());
+    const auto archive=temp.path()+"/input.zip";
+    write_file(archive,zip({{"a/content.pdf",pdf(content())},{"b/content.pdf",pdf(content())}}));
+    muz::LocalWorkspace workspace(muz::native_path(temp.path()+"/workspace"));
+    const auto batch=workspace.import_archive(muz::native_path(archive)).batch.id;
+    workspace.prepare_accounting(batch);
+    muz::MainWindow window(workspace); window.show();
+    QTableWidget* table=nullptr;
+    for(auto* candidate:window.findChildren<QTableWidget*>())if(candidate->columnCount()==12)table=candidate;
+    REQUIRE(table!=nullptr); REQUIRE(table->rowCount()==2);
+    auto button=[&](const QString& label) -> QPushButton* {
+        for(auto* candidate:window.findChildren<QPushButton*>())if(candidate->text()==label)return candidate;
+        return nullptr;
+    };
+    auto* approve=button(QStringLiteral("Seçilenleri onayla")); REQUIRE(approve!=nullptr);
+    auto* export_button=button(QStringLiteral("Onaylı Excel")); REQUIRE(export_button!=nullptr);
+    table->item(0,1)->setText("01.09.2026"); table->item(1,1)->setText("02.09.2026");
+    table->selectRow(0); approve->click();
+    REQUIRE(table->item(1,1)->text()=="02.09.2026");
+    REQUIRE(table->item(1,0)->text().contains(QStringLiteral("kaydedilmedi")));
+    table->selectRow(1); approve->click();
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto output=temp.path()+"/desktop-approved.xlsx";
+    bool dialog_seen=false;
+    QTimer::singleShot(0,[&] {
+        for(auto* widget:QApplication::topLevelWidgets())if(auto* dialog=qobject_cast<QFileDialog*>(widget)) {
+            dialog_seen=true; dialog->selectFile(output);
+            QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);
+        }
+    });
+    export_button->click(); REQUIRE(dialog_seen);
+    QXlsx::Document book(output); REQUIRE(book.load());
+    REQUIRE(book.read(2,2).toString()==table->item(0,1)->text());
+    REQUIRE(book.read(3,2).toString()==table->item(1,1)->text());
+}
+
+TEST_CASE("Test reset clears database and UI and permits reimport without deleting files", "[integration][desktop][reset]") {
+    QTemporaryDir temp; REQUIRE(temp.isValid());
+    const auto root=temp.path()+"/workspace";
+    const auto archive=temp.path()+"/input.zip";
+    write_file(archive,zip({{"a/content.pdf",pdf(content())}}));
+    muz::LocalWorkspace workspace(muz::native_path(root));
+    const auto imported=workspace.import_archive(muz::native_path(archive));
+    const auto batch=imported.batch.id;
+    auto rows=workspace.prepare_accounting(batch); rows[0].approved=true;
+    workspace.review_accounting(batch,rows);
+    const auto output=temp.path()+"/approved.xlsx";
+    workspace.export_accounting(batch,muz::native_path(output),false);
+    {
+        auto db=QSqlDatabase::addDatabase("QSQLITE","reset-rollback");
+        db.setDatabaseName(root+"/database/muzakere.sqlite3"); REQUIRE(db.open()); QSqlQuery query(db);
+        REQUIRE(query.exec("CREATE TABLE reset_blocker (hash TEXT REFERENCES stored_files(sha256))"));
+        REQUIRE(query.exec("INSERT INTO reset_blocker SELECT sha256 FROM stored_files")); query.finish();
+        REQUIRE_THROWS_AS(workspace.reset_database_for_testing(),muz::Error);
+        REQUIRE(workspace.batches().size()==1);
+        REQUIRE(workspace.accounting_rows(batch)[0].approved);
+        REQUIRE(query.exec("SELECT count(*) FROM accounting_exports")); REQUIRE(query.next());
+        REQUIRE(query.value(0).toInt()==1); query.finish();
+        REQUIRE(query.exec("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'audit_no_%'"));
+        REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==2); query.finish();
+        REQUIRE(query.exec("DROP TABLE reset_blocker"));
+    }
+    QSqlDatabase::removeDatabase("reset-rollback");
+    muz::MainWindow window(workspace); window.show();
+    auto* reset=window.findChild<QPushButton*>("resetDatabaseForTesting"); REQUIRE(reset!=nullptr);
+    auto answer=[&](QMessageBox::StandardButton choice) {
+        QTimer::singleShot(0,[choice] {
+            for(auto* widget:QApplication::topLevelWidgets())if(auto* dialog=qobject_cast<QMessageBox*>(widget))
+                dialog->button(choice)->click();
+        });
+        reset->click();
+    };
+    answer(QMessageBox::No); REQUIRE(window.batchCount()==1); REQUIRE(workspace.accounting_rows(batch)[0].approved);
+    answer(QMessageBox::Yes); REQUIRE(window.batchCount()==0); REQUIRE(window.documentCount()==0);
+    for(auto* table:window.findChildren<QTableWidget*>()) REQUIRE(table->rowCount()==0);
+    REQUIRE(workspace.batches().empty()); REQUIRE(workspace.accounting_rows(batch).empty());
+    REQUIRE(QFile::exists(root+'/'+QString::fromStdString(imported.documents[0].file.managed_path)));
+    REQUIRE(QFile::exists(output)); REQUIRE(QFile::exists(archive));
+    {
+        auto db=QSqlDatabase::addDatabase("QSQLITE","reset-check");
+        db.setDatabaseName(root+"/database/muzakere.sqlite3"); REQUIRE(db.open()); QSqlQuery query(db);
+        for(const auto* table:{"processing_batches","stored_files","case_records","incoming_documents",
+                "review_issues","audit_events","batch_archives","accounting_rows","accounting_exports","sqlite_sequence"}) {
+            REQUIRE(query.exec("SELECT count(*) FROM "+QString::fromLatin1(table))); REQUIRE(query.next());
+            REQUIRE(query.value(0).toInt()==0);
+        }
+        REQUIRE(query.exec("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'audit_no_%'"));
+        REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==2);
+        REQUIRE(query.exec("PRAGMA user_version")); REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==2);
+    }
+    QSqlDatabase::removeDatabase("reset-check");
+    const auto fresh=workspace.import_archive(muz::native_path(archive));
+    REQUIRE(fresh.batch.id!=batch); REQUIRE(fresh.batch.duplicate_count==0);
+    REQUIRE(workspace.prepare_accounting(fresh.batch.id).size()==1);
 }

@@ -31,6 +31,7 @@ public:
 class Workspace {
 public:
     virtual ~Workspace() = default;
+    virtual void reset_database_for_testing() = 0;
     virtual ImportResult import_folder(const std::filesystem::path& folder) = 0;
     virtual std::vector<ProcessingBatch> batches() = 0;
     virtual std::vector<IncomingDocument> documents(const std::string& batch_id) = 0;
