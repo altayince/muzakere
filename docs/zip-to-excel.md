@@ -18,6 +18,9 @@ one-off Python-generated workbook or external API is part of the runtime.
    reopening, preparing again or exporting does not refresh saved dates.
    **TODO (MUZ-5): replace this temporary default with the service date from the
    KEP record during KEP integration.** ZIP filenames do not supply this date.
+   Legacy rows with a missing date and no manual date edit are updated and saved
+   when loaded; their approval is cleared for review before approved export.
+   Dates explicitly cleared by the user remain blank.
 4. Match envelopes by parent group plus case number, then compare office and
    recipient where available. Different recipients override the same folder/case.
    Unmatched or ambiguous envelopes stay visible. No automatic case creation,
@@ -26,6 +29,7 @@ one-off Python-generated workbook or external API is part of the runtime.
    multiple rows for date entry and approval. Source identities and original
    extraction evidence are immutable; manual values add separate evidence. Changes
    invalidate approval; batch switching, closing and export refuse unsaved edits.
+   Saving or approving selected rows preserves unsaved changes in other rows.
 6. Export all rows as an explicit review draft, or approved rows as the accounting
    workbook. Contradictory pairs are blocked from approval; missing office/case/
    debtor, unknown notice type, malformed dates or malformed money cannot pass
@@ -78,3 +82,12 @@ muzakere --workspace /path/to/local-workspace --import-zip /path/to/input.zip --
 
 This command intentionally exports a draft only. Normal approval is an explicit
 desktop action. Do not run real-data acceptance tests in GitHub Actions.
+
+## Test reset (MUZ-7)
+
+The desktop test button resets the active workspace's whole database after a
+confirmation, including unsaved UI edits and all audit/export records. Schema
+tables, indexes and append-only audit triggers are recreated in one SQLite
+transaction; a failure rolls back the reset. No other workspace is touched.
+Original ZIP/PDF files and previously generated workbooks remain on disk. Import
+again to start a fresh test batch; old workbooks are not updated automatically.

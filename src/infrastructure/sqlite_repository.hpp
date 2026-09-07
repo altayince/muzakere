@@ -7,6 +7,7 @@ class SqliteRepository final : public BatchRepository {
 public:
     explicit SqliteRepository(const std::filesystem::path& database);
     ~SqliteRepository() override;
+    void reset_for_testing();
     SqliteRepository(const SqliteRepository&) = delete;
     SqliteRepository& operator=(const SqliteRepository&) = delete;
     void save(ImportResult& result) override;

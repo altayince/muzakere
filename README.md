@@ -30,6 +30,8 @@ PDF text and proposed envelope. New rows temporarily use the computer's local
 date when prepared as the service date. You can edit it; saved rows keep their
 date when reopened or exported. TODO (MUZ-5): obtain this date from the KEP record
 during KEP integration, replacing the temporary default.
+Older batches with missing, never-edited dates receive this default when opened
+and require approval again. Existing dates and deliberate manual edits are preserved.
 **Seçilenleri kaydet** saves corrections without approval. **Seçilenleri onayla**
 records your explicit review. **Onaylı Excel** exports approved rows; **İnceleme
 Excel’i** exports all rows as a visibly marked draft. Conflicting envelope/recipient
@@ -65,3 +67,8 @@ See [architecture](docs/architecture.md), [dependency decisions](docs/dependenci
 [schema v1](migrations/001_initial.sql), and [workflow](WORKFLOW.md).
 Accounting return-sheet import and petition generation remain future increments.
 Keep real client documents out of Git. See [ZIP-to-Excel details](docs/zip-to-excel.md).
+
+For debugging, **TEST — Veritabanını sıfırla** clears every database record after
+confirmation, including batches, approvals and audit history. The database schema
+is recreated atomically. Source files and generated Excel files remain on disk;
+you can import the same ZIP again. The button is disabled during processing.

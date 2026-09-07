@@ -9,6 +9,7 @@ class LocalWorkspace final : public Workspace {
 public:
     explicit LocalWorkspace(std::filesystem::path root);
     ~LocalWorkspace() override;
+    void reset_database_for_testing() override;
     LocalWorkspace(const LocalWorkspace&) = delete;
     LocalWorkspace& operator=(const LocalWorkspace&) = delete;
     ImportResult import_folder(const std::filesystem::path& folder) override;

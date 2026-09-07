@@ -44,6 +44,7 @@ private:
     void showAccounting();
     void reviewSelected(bool approve);
     void exportExcel(bool draft);
+    void resetDatabaseForTesting();
     void setBusy(bool busy);
     bool hasUnsavedEdits() const;
 };

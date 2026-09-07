@@ -26,6 +26,33 @@ public:
     std::string new_id() override { return QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString(); }
     std::string now_utc() override { return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString(); }
 };
+
+void apply_temporary_service_date(AccountingRow& row, const std::string& date) {
+    // TODO(MUZ-5): replace the temporary local date with the service date from KEP.
+    row.cells[service_date] = date;
+    row.approved = false;
+    std::erase(row.warnings, "Tebliğ tarihi belgede yok; kullanıcı girişi gerekli");
+    row.evidence.push_back({service_date, {}, date, "temporary-local-date-until-kep", 0.0});
+}
+
+std::vector<AccountingRow> load_accounting(SqliteRepository& repository, const std::string& batch_id) {
+    auto rows = repository.accounting_rows(batch_id);
+    std::vector<AccountingRow> updated;
+    const auto today = QDate::currentDate().toString("dd.MM.yyyy").toStdString();
+    for (auto& row : rows) {
+        // Older batches predate the temporary default. Preserve deliberate manual
+        // edits (including an explicitly cleared date) and all nonempty dates.
+        const bool date_reviewed = std::any_of(row.evidence.begin(), row.evidence.end(), [](const auto& field) {
+            return field.column == service_date && field.method == "manual-review";
+        });
+        if (row.cells[service_date].empty() && !date_reviewed) {
+            apply_temporary_service_date(row, today);
+            updated.push_back(row);
+        }
+    }
+    if (!updated.empty()) repository.save_accounting(batch_id, updated, true);
+    return rows;
+}
 } // namespace
 
 struct LocalWorkspace::Impl {
@@ -47,6 +74,12 @@ LocalWorkspace::LocalWorkspace(std::filesystem::path root) : impl_(std::make_uni
     SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
 }
 LocalWorkspace::~LocalWorkspace() = default;
+
+void LocalWorkspace::reset_database_for_testing() {
+    std::lock_guard guard(impl_->writer);
+    SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
+    repository.reset_for_testing();
+}
 
 ImportResult LocalWorkspace::import_folder(const std::filesystem::path& folder) {
     std::lock_guard guard(impl_->writer);
@@ -91,7 +124,7 @@ ImportResult LocalWorkspace::import_archive(const std::filesystem::path& archive
 std::vector<AccountingRow> LocalWorkspace::prepare_accounting(const std::string& batch_id) {
     std::lock_guard guard(impl_->writer);
     SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
-    auto existing = repository.accounting_rows(batch_id);
+    auto existing = load_accounting(repository,batch_id);
     if (!existing.empty()) return existing; // Never overwrite reviewed data with a rerun.
     const auto documents = repository.documents(batch_id);
     if (documents.empty()) throw Error(ErrorCode::invalid_input);
@@ -114,22 +147,16 @@ std::vector<AccountingRow> LocalWorkspace::prepare_accounting(const std::string&
     }
     if (parsed.empty()) throw Error(ErrorCode::invalid_input);
     auto rows = match_accounting(std::move(parsed));
-    // TODO(MUZ-5): KEP integration must replace this temporary local-date default
-    // with the service date supplied by the KEP record.
     const auto temporary_service_date = QDate::currentDate().toString("dd.MM.yyyy").toStdString();
-    for (auto& row : rows) {
-        row.cells[service_date] = temporary_service_date;
-        std::erase(row.warnings, "Tebliğ tarihi belgede yok; kullanıcı girişi gerekli");
-        row.evidence.push_back({service_date, {}, temporary_service_date,
-            "temporary-local-date-until-kep", 0.0});
-    }
+    for (auto& row : rows) apply_temporary_service_date(row,temporary_service_date);
     repository.save_accounting(batch_id,rows,false);
     return rows;
 }
 
 std::vector<AccountingRow> LocalWorkspace::accounting_rows(const std::string& batch_id) {
+    std::lock_guard guard(impl_->writer);
     SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
-    return repository.accounting_rows(batch_id);
+    return load_accounting(repository,batch_id);
 }
 
 void LocalWorkspace::review_accounting(const std::string& batch_id, const std::vector<AccountingRow>& edits) {
@@ -166,7 +193,7 @@ void LocalWorkspace::review_accounting(const std::string& batch_id, const std::v
 void LocalWorkspace::export_accounting(const std::string& batch_id, const std::filesystem::path& output, bool draft) {
     std::lock_guard guard(impl_->writer);
     SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
-    auto rows = repository.accounting_rows(batch_id);
+    auto rows = load_accounting(repository,batch_id);
     if (!draft) rows.erase(std::remove_if(rows.begin(),rows.end(),[](const auto& row){return !row.approved;}),rows.end());
     if (rows.empty()) throw Error(ErrorCode::invalid_input);
     std::set<std::string> source_ids;
