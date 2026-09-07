@@ -35,7 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ qt6-base-dev libqt6sql6-sqlite
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-base-private-dev libqt6sql6-sqlite python3-venv
+      - name: Prepare native PDFium
+        run: |
+          python3 -m venv .tools/python
+          .tools/python/bin/pip install pypdfium2==5.13.0
+          .tools/python/bin/python scripts/prepare-pdfium.py
       - name: Configure
         run: cmake --preset dev
       - name: Build

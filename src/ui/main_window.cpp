@@ -11,6 +11,9 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QtConcurrentRun>
+#include <QPlainTextEdit>
+#include <QLineEdit>
+#include <QHBoxLayout>
 
 namespace muz {
 namespace {
@@ -31,6 +34,10 @@ void row(QTableWidget* table, const QStringList& values) {
         table->setItem(index, column, new QTableWidgetItem(values[column]));
 }
 QString s(const std::string& value) { return QString::fromStdString(value); }
+std::filesystem::path native(const QString& value) {
+    const auto bytes = value.toUtf8();
+    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(bytes.constData()),static_cast<std::size_t>(bytes.size())));
+}
 QString errorText(const std::string& code) {
     if (code == "invalid_input") return QStringLiteral("Boş klasör, çalışma alanıyla çakışan klasör veya desteklenmeyen dosya bağlantısı.");
     if (code == "integrity_check_failed") return QStringLiteral("Dosya bütünlüğü doğrulanamadı. Kaynak ve arşiv dosyasını inceleyin.");
@@ -45,10 +52,16 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);
     layout->addWidget(new QLabel(QStringLiteral("Belge içe aktarma ve batch takibi"), central));
-    layout->addWidget(new QLabel(QStringLiteral("Belgeler yerel arşive kopyalanır. Dosya eşleştirme ve hukuki onay henüz yapılmaz."), central));
+    layout->addWidget(new QLabel(QStringLiteral("Belgeler yerel arşivde korunur. Otomatik çıkarımlar ve zarf eşleştirmeleri kullanıcı incelemesi gerektirir."), central));
     import_ = new QPushButton(QStringLiteral("Klasörden &belge al…  (Ctrl+I)"), central);
     import_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     layout->addWidget(import_);
+    auto* zip_button = new QPushButton(QStringLiteral("ZIP arşivi al ve Excel satırlarını hazırla…"),central);
+    layout->addWidget(zip_button); actions_.push_back(zip_button);
+    connect(zip_button,&QPushButton::clicked,this,[this] {
+        const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("Tebligat arşivi seçin"),{},"ZIP (*.zip)");
+        if (!file.isEmpty()) importArchive(native(file));
+    });
     progress_ = new QProgressBar(central);
     progress_->setRange(0, 0);
     progress_->hide();
@@ -69,7 +82,69 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     issues_->setColumnWidth(0, 420);
     tabs->addTab(documents_, QStringLiteral("Belgeler"));
     tabs->addTab(issues_, QStringLiteral("İnceleme gerekenler"));
-    auto* changes = new QLabel(QStringLiteral("MUZ-1 — Desktop skeleton and document import milestone\n"
+    auto* review = new QWidget(tabs);
+    auto* review_layout = new QVBoxLayout(review);
+    auto* toolbar = new QHBoxLayout;
+    auto button = [&](const QString& label) {
+        auto* result = new QPushButton(label,review); toolbar->addWidget(result); actions_.push_back(result); return result;
+    };
+    auto* prepare=button(QStringLiteral("Satırları hazırla"));
+    auto* select_all=button(QStringLiteral("Tümünü seç"));
+    auto* save=button(QStringLiteral("Seçilenleri kaydet"));
+    auto* approve=button(QStringLiteral("Seçilenleri onayla"));
+    auto* draft=button(QStringLiteral("İnceleme Excel’i"));
+    auto* export_button=button(QStringLiteral("Onaylı Excel"));
+    review_layout->addLayout(toolbar);
+    auto* date_layout=new QHBoxLayout;
+    date_=new QLineEdit(review); date_->setPlaceholderText(QStringLiteral("Tebliğ tarihi: gg.aa.yyyy (isteğe bağlı)"));
+    auto* apply_date=new QPushButton(QStringLiteral("Tarihi seçilenlere uygula"),review); actions_.push_back(apply_date);
+    date_layout->addWidget(date_); date_layout->addWidget(apply_date); review_layout->addLayout(date_layout);
+    review_layout->addWidget(new QLabel(QStringLiteral("Alanları düzenleyin, kaynak metni ve uyarıları inceleyin. Onay, seçili satırların uyarılarıyla birlikte kabulüdür."),review));
+    auto* review_splitter=new QSplitter(Qt::Vertical,review);
+    accounting_=new QTableWidget(review_splitter);
+    configure(accounting_,{QStringLiteral("Durum"),QStringLiteral("Tebliğ Tarihi"),QStringLiteral("İcra Dairesi"),
+        QStringLiteral("Esas Numarası"),QStringLiteral("Borç Miktarı (TL)"),QStringLiteral("Borçlu"),QStringLiteral("Borçlu TCKN/VKN"),
+        QStringLiteral("Alacaklı"),QStringLiteral("İcra Dairesi İBAN"),QStringLiteral("89/1?"),QStringLiteral("Açıklama"),QStringLiteral("Uyarılar")});
+    accounting_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    accounting_->setEditTriggers(QAbstractItemView::DoubleClicked|QAbstractItemView::EditKeyPressed);
+    accounting_->setColumnWidth(2,290); accounting_->setColumnWidth(5,240); accounting_->setColumnWidth(7,280);
+    source_=new QPlainTextEdit(review_splitter); source_->setReadOnly(true);
+    source_->setPlaceholderText(QStringLiteral("Seçili satırın PDF metni ve önerilen zarf burada gösterilir."));
+    review_layout->addWidget(review_splitter);
+    tabs->addTab(review,QStringLiteral("Excel hazırlama / inceleme"));
+    connect(accounting_,&QTableWidget::itemSelectionChanged,this,[this] {
+        const int current=accounting_->currentRow();
+        source_->setPlainText(current>=0 && current<static_cast<int>(accounting_rows_.size()) ?
+            s(accounting_rows_[static_cast<std::size_t>(current)].source_text):QString{});
+    });
+    connect(accounting_,&QTableWidget::itemChanged,this,[this](QTableWidgetItem* item) {
+        if (item->column()>0 && item->column()<=static_cast<int>(column_count)) {
+            const QSignalBlocker blocker(accounting_);
+            accounting_->item(item->row(),0)->setText(QStringLiteral("Değiştirildi — kaydedilmedi"));
+            accounting_rows_[static_cast<std::size_t>(item->row())].approved=false;
+        }
+    });
+    connect(select_all,&QPushButton::clicked,accounting_,&QTableWidget::selectAll);
+    connect(save,&QPushButton::clicked,this,[this]{reviewSelected(false);});
+    connect(approve,&QPushButton::clicked,this,[this]{reviewSelected(true);});
+    connect(apply_date,&QPushButton::clicked,this,[this] {
+        for (const auto& index:accounting_->selectionModel()->selectedRows()) accounting_->item(index.row(),1)->setText(date_->text());
+    });
+    connect(draft,&QPushButton::clicked,this,[this]{exportExcel(true);});
+    connect(export_button,&QPushButton::clicked,this,[this]{exportExcel(false);});
+    connect(prepare,&QPushButton::clicked,this,[this] {
+        if (selected_batch_.empty() || busy()) return;
+        if(hasUnsavedEdits()){status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin."));return;}
+        const auto id=selected_batch_; setBusy(true);
+        watcher_.setFuture(QtConcurrent::run([this,id] {
+            try { workspace_.prepare_accounting(id); return Outcome{id,{}}; }
+            catch(const Error& error){return Outcome{id,error.what()};}
+            catch(...){return Outcome{id,"unexpected_error"};}
+        }));
+    });
+    auto* changes = new QLabel(QStringLiteral("MUZ-3 — ZIP import, PDF review and accounting Excel export\n"
+        "ZIP alımı, yerel PDF okuma, kaynak metinle toplu inceleme ve 11 sütunlu Excel çıktısı.\n\n"
+        "MUZ-1 — Desktop skeleton and document import milestone\n"
         "Yerel klasör importu, SHA-256 arşivi, SQLite batch kayıtları ve inceleme listesi."), tabs);
     changes->setWordWrap(true);
     changes->setAlignment(Qt::AlignTop | Qt::AlignLeft);
@@ -89,14 +164,19 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     });
     connect(batches_, &QTableWidget::itemSelectionChanged, this, [this] { selectBatch(); });
     connect(&watcher_, &QFutureWatcher<Outcome>::finished, this, [this] {
-        import_->setEnabled(true);
-        progress_->hide();
+        setBusy(false);
         const auto outcome = watcher_.result();
-        if (!outcome.error.empty()) status_->setText(errorText(outcome.error));
+        if (!outcome.error.empty()) {
+            refresh(outcome.batch_id);
+            status_->setText(errorText(outcome.error));
+        }
         else {
             status_->setText(QStringLiteral("İçe aktarma tamamlandı. Batch: ") + s(outcome.batch_id));
             refresh(outcome.batch_id);
         }
+    });
+    connect(&watcher_,&QFutureWatcher<Outcome>::finished,this,[this,tabs,review] {
+        if(!accounting_rows_.empty())tabs->setCurrentWidget(review);
     });
     refresh();
 }
@@ -105,8 +185,8 @@ MainWindow::~MainWindow() { watcher_.waitForFinished(); }
 
 void MainWindow::importFolder(const std::filesystem::path& folder) {
     if (watcher_.isRunning()) return;
-    import_->setEnabled(false);
-    progress_->show();
+    if(hasUnsavedEdits()){status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin."));return;}
+    setBusy(true);
     status_->setText(QStringLiteral("Belgeler kopyalanıyor ve bütünlükleri doğrulanıyor…"));
     watcher_.setFuture(QtConcurrent::run([this, folder] {
         try { return Outcome{workspace_.import_folder(folder).batch.id, {}}; }
@@ -133,25 +213,109 @@ void MainWindow::refresh(const std::string& select_id) {
 }
 
 void MainWindow::selectBatch() {
+    if(hasUnsavedEdits()) {
+        status_->setText(QStringLiteral("Batch değiştirmeden önce düzenlediğiniz satırları kaydedin."));
+        const QSignalBlocker blocker(batches_);
+        for(int i=0;i<batches_->rowCount();++i)if(batches_->item(i,0)->text().toStdString()==selected_batch_)batches_->selectRow(i);
+        return;
+    }
     documents_->setRowCount(0);
     issues_->setRowCount(0);
+    selected_batch_.clear(); accounting_rows_.clear(); showAccounting();
     const auto index = batches_->currentRow();
     if (index < 0) return;
     try {
         const auto id = batches_->item(index, 0)->text().toStdString();
+        selected_batch_=id;
         for (const auto& doc : workspace_.documents(id))
             row(documents_, {s(doc.original_filename), s(doc.file.mime_type), QString::number(doc.file.size),
                 doc.duplicate ? QStringLiteral("Evet") : QStringLiteral("Hayır"), s(doc.file.sha256)});
         for (const auto& issue : workspace_.issues(id)) row(issues_, {s(issue.source_path), errorText(issue.code)});
+        accounting_rows_=workspace_.accounting_rows(id); showAccounting();
     } catch (const Error& error) { status_->setText(errorText(error.what())); }
 }
 
+void MainWindow::setBusy(bool value) {
+    import_->setEnabled(!value); batches_->setEnabled(!value); accounting_->setEnabled(!value);
+    for (auto* button:actions_) button->setEnabled(!value);
+    progress_->setVisible(value);
+}
+
+void MainWindow::importArchive(const std::filesystem::path& archive) {
+    if (busy()) return;
+    if(hasUnsavedEdits()){status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin."));return;}
+    setBusy(true); status_->setText(QStringLiteral("ZIP arşivleniyor, PDF’ler okunuyor ve Excel satırları hazırlanıyor…"));
+    watcher_.setFuture(QtConcurrent::run([this,archive] {
+        std::string id;
+        try {
+            id=workspace_.import_archive(archive).batch.id;
+            workspace_.prepare_accounting(id);
+            return Outcome{id,{}};
+        } catch(const Error& error){return Outcome{id,error.what()};}
+        catch(...){return Outcome{id,"unexpected_error"};}
+    }));
+}
+
+void MainWindow::showAccounting() {
+    const QSignalBlocker blocker(accounting_);
+    accounting_->setRowCount(0); source_->clear();
+    for (const auto& record:accounting_rows_) {
+        QStringList values{record.approved?QStringLiteral("Onaylı"):QStringLiteral("Onay bekliyor")};
+        for (const auto& cell:record.cells) values.append(s(cell));
+        QStringList warnings; for(const auto& warning:record.warnings) warnings.append(s(warning));
+        if(!record.recipient.empty())warnings.prepend(QStringLiteral("Muhatap: ")+s(record.recipient));
+        values.append(warnings.join("; ")); row(accounting_,values);
+        const int index=accounting_->rowCount()-1;
+        accounting_->item(index,0)->setFlags(accounting_->item(index,0)->flags() & ~Qt::ItemIsEditable);
+        accounting_->item(index,11)->setFlags(accounting_->item(index,11)->flags() & ~Qt::ItemIsEditable);
+        accounting_->item(index,0)->setToolTip(s(record.id)+"\n"+s(record.source_path));
+    }
+}
+
+void MainWindow::reviewSelected(bool approve) {
+    try {
+        std::vector<AccountingRow> edits;
+        for (const auto& index:accounting_->selectionModel()->selectedRows()) {
+            auto record=accounting_rows_.at(static_cast<std::size_t>(index.row()));
+            for (std::size_t c=0;c<column_count;++c) record.cells[c]=accounting_->item(index.row(),static_cast<int>(c)+1)->text().toStdString();
+            record.approved=approve; edits.push_back(std::move(record));
+        }
+        if (edits.empty()) {status_->setText(QStringLiteral("Önce incelemek istediğiniz satırları seçin."));return;}
+        workspace_.review_accounting(selected_batch_,edits);
+        accounting_rows_=workspace_.accounting_rows(selected_batch_);showAccounting();
+        status_->setText(approve?QStringLiteral("Seçili satırlar onaylandı; Onaylı Excel ile dışa aktarabilirsiniz."):
+            QStringLiteral("Seçili satırlardaki değişiklikler kaydedildi."));
+    } catch(const Error&){status_->setText(QStringLiteral("Kayıt başarısız. Çelişkili zarf/muhatap satırlarını onaylamayın. Daire, esas, borçlu, Evet/Hayır, tarih (gg.aa.yyyy) ve tutarı (1234,56) kontrol edin."));}
+}
+
+void MainWindow::exportExcel(bool draft) {
+    if (selected_batch_.empty()) return;
+    for(int i=0;i<accounting_->rowCount();++i) if(accounting_->item(i,0)->text().contains(QStringLiteral("kaydedilmedi"))) {
+        status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin veya onaylayın."));return;
+    }
+    const auto output=QFileDialog::getSaveFileName(this,QStringLiteral("Excel çıktısı için yeni dosya adı seçin"),
+        draft?"Icra_Dosyalari_Inceleme.xlsx":"Icra_Dosyalari.xlsx","Excel (*.xlsx)");
+    if(output.isEmpty())return;
+    try {
+        workspace_.export_accounting(selected_batch_,native(output),draft);
+        status_->setText(QStringLiteral("Excel oluşturuldu: ")+output);
+    } catch(const Error&){status_->setText(QStringLiteral("Excel oluşturulamadı. Yeni bir .xlsx dosya adı kullanın; onaylı çıktı için önce satırları onaylayın."));}
+}
+
+bool MainWindow::hasUnsavedEdits() const {
+    if(!accounting_)return false;
+    for(int i=0;i<accounting_->rowCount();++i)
+        if(accounting_->item(i,0)->text().contains(QStringLiteral("kaydedilmedi")))return true;
+    return false;
+}
 int MainWindow::batchCount() const { return batches_->rowCount(); }
 int MainWindow::documentCount() const { return documents_->rowCount(); }
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (watcher_.isRunning()) {
         status_->setText(QStringLiteral("İçe aktarma sürüyor. Tamamlandığında pencereyi kapatabilirsiniz."));
         event->ignore();
+    } else if(hasUnsavedEdits()) {
+        status_->setText(QStringLiteral("Kapatmadan önce düzenlediğiniz satırları kaydedin."));event->ignore();
     } else QMainWindow::closeEvent(event);
 }
 } // namespace muz

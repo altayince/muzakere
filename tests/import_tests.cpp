@@ -53,13 +53,13 @@ public:
 };
 }
 
-TEST_CASE("Initialize schema v1 and reopen the persisted workspace", "[integration][database]") {
+TEST_CASE("Initialize current schema and reopen the persisted workspace", "[integration][database]") {
     Fixture f;
     { muz::LocalWorkspace workspace(path(f.root)); REQUIRE(workspace.batches().empty()); }
     muz::LocalWorkspace reopened(path(f.root));
     Db db(f.root);
-    REQUIRE(db.scalar("PRAGMA user_version") == 1);
-    REQUIRE(db.scalar("SELECT COUNT(*) FROM schema_migrations") == 1);
+    REQUIRE(db.scalar("PRAGMA user_version") == 2);
+    REQUIRE(db.scalar("SELECT COUNT(*) FROM schema_migrations") == 2);
     REQUIRE(reopened.batches().empty());
 }
 

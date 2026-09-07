@@ -1,6 +1,7 @@
 #pragma once
 
 #include "muz/domain/model.hpp"
+#include "muz/domain/accounting.hpp"
 
 namespace muz {
 class FileStore {
@@ -34,5 +35,10 @@ public:
     virtual std::vector<ProcessingBatch> batches() = 0;
     virtual std::vector<IncomingDocument> documents(const std::string& batch_id) = 0;
     virtual std::vector<ReviewIssue> issues(const std::string& batch_id) = 0;
+    virtual ImportResult import_archive(const std::filesystem::path& archive) = 0;
+    virtual std::vector<AccountingRow> prepare_accounting(const std::string& batch_id) = 0;
+    virtual std::vector<AccountingRow> accounting_rows(const std::string& batch_id) = 0;
+    virtual void review_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows) = 0;
+    virtual void export_accounting(const std::string& batch_id, const std::filesystem::path& output, bool draft) = 0;
 };
 } // namespace muz

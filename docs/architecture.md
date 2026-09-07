@@ -1,5 +1,9 @@
 # Architecture and MVP boundaries
 
+MUZ-3 adds native ZIP/PDF import, persisted field/matching review and accounting
+Excel export on top of the initial slice below. See [ZIP-to-Excel](zip-to-excel.md)
+for current behavior, schema v2, validation limits and the remaining increments.
+
 The first increment is the complete **folder -> preserved bytes -> SQLite ->
 batch screen** slice. Imported does not mean legally approved. No case links are
 inferred; `case_id` stays null until a later human review use case.
@@ -71,12 +75,12 @@ work. Do not treat this first increment as production acceptance of those areas.
 
 1. Implemented: initialize workspace/schema, import folder, hash/preserve/dedup,
    save batch + issues + audit atomically, list batches/documents/problems.
-2. Next: text PDF extraction with source snippets/method/confidence; scanned PDFs
+2. Implemented in MUZ-3: text PDF extraction with source snippets/method/confidence; scanned PDFs
    marked OCR/manual review. Identifier normalization and validation.
-3. Matching strategies return matched/ambiguous/unmatched plus evidence and score;
-   conflicting signals always require review. Human overrides are separate events.
+3. Implemented in MUZ-3: matching proposals plus evidence and score;
+   conflicting signals always require review. Manual pair reassignment remains future work.
 4. Review extracted fields and create/update approved cases with stable UUIDs.
-5. Deterministic XLSX export; import keyed by record ID with duplicate/missing/new/
+5. Implemented: deterministic XLSX row export. Future: import keyed by record ID with duplicate/missing/new/
    invalid/unknown-row reports. Fallback suggestions never silently approve rows.
 6. Versioned templates, VAR/YOK selection and required-field validation; generate
    petitions only for approved data, record template version and output hash.

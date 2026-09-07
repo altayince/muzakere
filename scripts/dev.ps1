@@ -14,7 +14,8 @@ try {
     }
     if ($Action -eq 'Setup') {
         if (!(Test-Path -LiteralPath $python)) { Invoke-Checked 'python' @('-m','venv','.tools\python') }
-        Invoke-Checked $python @('-m','pip','install','--disable-pip-version-check','aqtinstall==3.3.0','cmake==4.4.3','ninja==1.13.2')
+        Invoke-Checked $python @('-m','pip','install','--disable-pip-version-check','aqtinstall==3.3.0','cmake==4.4.3','ninja==1.13.2','pypdfium2==5.13.0')
+        Invoke-Checked $python @('scripts/prepare-pdfium.py')
         if (!(Test-Path -LiteralPath "$qtRoot\bin\qmake.exe")) {
             Invoke-Checked $python @('-m','aqt','install-qt','windows','desktop','6.8.3','win64_mingw','--archives','qtbase','--outputdir','.tools\Qt')
         }
