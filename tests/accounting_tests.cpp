@@ -41,6 +41,13 @@ QString content() {
 QString envelope() {
     return QStringLiteral("8. Genel İcra Dairesi\nDosya No: 2026/42 İcra\nTEBLİĞ MAZBATASI\nANKARA\nT.C.\nBU ZARFTA Haciz Yazısı VARDIR.");
 }
+QString multiple_debtors(bool missing_first_id=false) {
+    auto text=content();
+    text.replace("ÖRNEK BORÇLU, 00000000000 TC Nolu,",
+        missing_first_id?QStringLiteral("1- AYŞE ÖRNEK, adres bilgisi\n2- CAN ÖRNEK, 22222222222 TC Nolu,"):
+                         QStringLiteral("1- AYŞE ÖRNEK, 11111111111 TC Nolu,\n2- CAN ÖRNEK, 22222222222 TC Nolu,"));
+    return text;
+}
 QByteArray pdf(const QString& text) {
     QBuffer buffer; REQUIRE(buffer.open(QIODevice::WriteOnly));
     { QPdfWriter writer(&buffer); writer.setResolution(96);
@@ -98,6 +105,38 @@ TEST_CASE("General letter classification ignores footer references to article 89
         auto release=content();release.replace("BİRİNCİ HACİZ İHBARNAMESİ","DAĞITIM YERLERİNE");release+=wording;
         REQUIRE(parsed(release,"release","a/general.pdf").row.cells[muz::first_notice]=="Hayır");
     }
+}
+
+TEST_CASE("Each debtor retains their own identity and envelope without a multiple-debtor warning", "[unit][matching]") {
+    for(bool missing_id:{false,true}) {
+        auto doc=parsed(multiple_debtors(missing_id),"doc","a/content.pdf");
+        const auto rows=muz::match_accounting({doc,parsed(envelope(),"env","a/envelope.pdf")});
+        REQUIRE(rows.size()==2); REQUIRE(rows[0].id!=rows[1].id);
+        REQUIRE(rows[0].document_id==rows[1].document_id);
+        REQUIRE(rows[0].cells[muz::debtor]=="AYŞE ÖRNEK");
+        REQUIRE(rows[0].cells[muz::debtor_id]==(missing_id?"":"11111111111"));
+        REQUIRE(rows[1].cells[muz::debtor]=="CAN ÖRNEK"); REQUIRE(rows[1].cells[muz::debtor_id]=="22222222222");
+        for(const auto& row:rows) {
+            REQUIRE(row.envelope_id=="env"); REQUIRE(row.cells[muz::amount]=="1.234,56");
+            for(const auto& warning:row.warnings) {
+                REQUIRE(warning.find("Birden fazla borçlu")==std::string::npos);
+                REQUIRE(warning.find("Aynı esas numarası tekrar")==std::string::npos);
+            }
+        }
+        REQUIRE(muz::match_accounting({doc})[1].id==rows[1].id);
+    }
+}
+
+TEST_CASE("Review status distinguishes clean, incomplete and blocked rows", "[unit][accounting]") {
+    auto row=parsed(content(),"doc","a/content.pdf").row;
+    row.warnings.clear(); row.envelope_id="env"; row.cells[muz::service_date]="07.09.2026";
+    REQUIRE(muz::review_status(row)==muz::ReviewStatus::ready);
+    row.cells[muz::debtor_id].clear(); REQUIRE(muz::review_status(row)==muz::ReviewStatus::review);
+    row.cells[muz::debtor_id]="11111111111; 22222222222"; REQUIRE(muz::review_status(row)==muz::ReviewStatus::blocked);
+    row.cells[muz::debtor_id]="11111111111"; row.pair_conflict=true;
+    REQUIRE(muz::review_status(row)==muz::ReviewStatus::blocked);
+    row.pair_conflict=false; row.cells[muz::service_date]="31.02.2026";
+    REQUIRE(muz::review_status(row)==muz::ReviewStatus::blocked);
 }
 
 TEST_CASE("Envelope matching needs identifiers and retains orphan envelopes", "[unit][matching]") {
@@ -191,7 +230,7 @@ TEST_CASE("Desktop ZIP import exposes editable rows and persists explicit approv
     while(window.busy() && timer.elapsed()<10000){QApplication::processEvents();QThread::msleep(10);}
     QApplication::processEvents();REQUIRE_FALSE(window.busy());REQUIRE(window.batchCount()==1);
     QTableWidget* table=nullptr;
-    for(auto* candidate:window.findChildren<QTableWidget*>())if(candidate->columnCount()==12)table=candidate;
+    for(auto* candidate:window.findChildren<QTableWidget*>())if(candidate->columnCount()==13)table=candidate;
     REQUIRE(table!=nullptr);REQUIRE(table->rowCount()==1);
     table->selectRow(0);table->item(0,1)->setText("31.08.2026");
     QPushButton* approve=nullptr;
@@ -255,7 +294,7 @@ TEST_CASE("Desktop approval retains other edits and exports the displayed servic
     workspace.prepare_accounting(batch);
     muz::MainWindow window(workspace); window.show();
     QTableWidget* table=nullptr;
-    for(auto* candidate:window.findChildren<QTableWidget*>())if(candidate->columnCount()==12)table=candidate;
+    for(auto* candidate:window.findChildren<QTableWidget*>())if(candidate->columnCount()==13)table=candidate;
     REQUIRE(table!=nullptr); REQUIRE(table->rowCount()==2);
     auto button=[&](const QString& label) -> QPushButton* {
         for(auto* candidate:window.findChildren<QPushButton*>())if(candidate->text()==label)return candidate;
@@ -335,10 +374,81 @@ TEST_CASE("Test reset clears database and UI and permits reimport without deleti
         }
         REQUIRE(query.exec("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'audit_no_%'"));
         REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==2);
-        REQUIRE(query.exec("PRAGMA user_version")); REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==2);
+        REQUIRE(query.exec("PRAGMA user_version")); REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==3);
     }
     QSqlDatabase::removeDatabase("reset-check");
     const auto fresh=workspace.import_archive(muz::native_path(archive));
     REQUIRE(fresh.batch.id!=batch); REQUIRE(fresh.batch.duplicate_count==0);
     REQUIRE(workspace.prepare_accounting(fresh.batch.id).size()==1);
+}
+
+TEST_CASE("Schema v2 combined debtors migrate to independent review and Excel rows", "[integration][migration]") {
+    QTemporaryDir temp; REQUIRE(temp.isValid());
+    const auto root=temp.path()+"/workspace", archive=temp.path()+"/input.zip";
+    write_file(archive,zip({{"a/content.pdf",pdf(multiple_debtors())}}));
+    muz::LocalWorkspace workspace(muz::native_path(root));
+    const auto batch=workspace.import_archive(muz::native_path(archive)).batch.id;
+    auto fresh=workspace.prepare_accounting(batch); REQUIRE(fresh.size()==2);
+    auto old=fresh.front(); old.approved=true;
+    old.cells[muz::debtor]="AYŞE ÖRNEK; CAN ÖRNEK";
+    old.cells[muz::debtor_id]="11111111111; 22222222222";
+    old.cells[muz::notes]="Önceki not korunsun";
+    old.warnings.push_back("Birden fazla borçlu var; tutar borçlulara bölünmedi");
+    {
+        auto db=QSqlDatabase::addDatabase("QSQLITE","v2-debtors");
+        db.setDatabaseName(root+"/database/muzakere.sqlite3"); REQUIRE(db.open()); QSqlQuery query(db);
+        REQUIRE(query.exec("DROP TABLE accounting_rows"));
+        REQUIRE(query.exec("CREATE TABLE accounting_rows(id TEXT PRIMARY KEY REFERENCES incoming_documents(id),batch_id TEXT NOT NULL REFERENCES processing_batches(id),payload TEXT NOT NULL,approved INTEGER NOT NULL)"));
+        REQUIRE(query.prepare("INSERT INTO accounting_rows VALUES(?,?,?,1)"));
+        query.addBindValue(QString::fromStdString(old.id));query.addBindValue(QString::fromStdString(batch));
+        query.addBindValue(muz::encode_row(old)); REQUIRE(query.exec());
+        REQUIRE(query.exec("DELETE FROM schema_migrations WHERE version=3")); REQUIRE(query.exec("PRAGMA user_version=2"));
+    }
+    QSqlDatabase::removeDatabase("v2-debtors");
+    auto rows=workspace.accounting_rows(batch); REQUIRE(rows.size()==2);
+    REQUIRE(rows[0].id==old.id); REQUIRE(rows[1].id==fresh[1].id);
+    REQUIRE(rows[0].cells[muz::debtor_id]=="11111111111"); REQUIRE(rows[1].cells[muz::debtor_id]=="22222222222");
+    REQUIRE_FALSE(rows[0].approved); REQUIRE_FALSE(rows[1].approved);
+    REQUIRE(rows[1].cells[muz::notes]==old.cells[muz::notes]);
+    rows[0].approved=true; workspace.review_accounting(batch,{rows[0]});
+    REQUIRE_FALSE(workspace.accounting_rows(batch)[1].approved);
+    rows[1].approved=true; workspace.review_accounting(batch,{rows[1]});
+    const auto output=temp.path()+"/separate.xlsx";
+    workspace.export_accounting(batch,muz::native_path(output),false);
+    QXlsx::Document book(output); REQUIRE(book.load());
+    REQUIRE(book.read(2,6).toString()=="AYŞE ÖRNEK"); REQUIRE(book.read(2,7).toString()=="11111111111");
+    REQUIRE(book.read(3,6).toString()=="CAN ÖRNEK"); REQUIRE(book.read(3,7).toString()=="22222222222");
+    REQUIRE(book.read(1,12).toString()=="Muhatap"); REQUIRE(book.read(1,13).toString()=="Uyarılar");
+    REQUIRE(book.read(2,12).toString()=="ÖRNEK ŞİRKET");
+    REQUIRE_FALSE(book.read(2,13).toString().contains("ÖRNEK ŞİRKET"));
+    REQUIRE_FALSE(book.read(2,13).toString().contains(QStringLiteral("Birden fazla borçlu")));
+    REQUIRE(workspace.prepare_accounting(batch).size()==2);
+    auto manual=old; manual.evidence.push_back({muz::debtor_id,manual.document_id,"manual","manual-review",1.0});
+    REQUIRE(muz::split_legacy_debtors(manual).size()==1);
+    REQUIRE(muz::split_legacy_debtors(manual)[0].identity_conflict);
+}
+
+TEST_CASE("Desktop uses dedicated recipient cells and updates blocking colors on edits", "[integration][desktop]") {
+    QTemporaryDir temp; REQUIRE(temp.isValid());
+    const auto root=temp.path()+"/workspace",archive=temp.path()+"/input.zip";
+    write_file(archive,zip({{"a/content.pdf",pdf(content())}}));
+    muz::LocalWorkspace workspace(muz::native_path(root));
+    const auto batch=workspace.import_archive(muz::native_path(archive)).batch.id;
+    auto rows=workspace.prepare_accounting(batch);
+    rows[0].warnings.clear(); rows[0].envelope_id=rows[0].document_id;
+    { muz::SqliteRepository repository(muz::native_path(root+"/database/muzakere.sqlite3")); repository.save_accounting(batch,rows,true); }
+    muz::MainWindow window(workspace); window.show();
+    auto* table=window.findChild<QTableWidget*>("accountingTable"); REQUIRE(table!=nullptr);
+    REQUIRE(table->item(0,0)->background().color()==QColor("#D4EDDA"));
+    REQUIRE(table->item(0,11)->text()=="ÖRNEK ŞİRKET"); REQUIRE(table->item(0,12)->text().isEmpty());
+    table->item(0,1)->setText("08.09.2026");
+    REQUIRE(table->item(0,0)->background().color()==QColor("#FFF3CD"));
+    table->item(0,6)->setText("11111111111; 22222222222");
+    REQUIRE(table->item(0,0)->background().color()==QColor("#F8D7DA"));
+    table->item(0,6)->setText("11111111111");
+    REQUIRE(table->item(0,0)->background().color()==QColor("#FFF3CD"));
+    for(auto* button:window.findChildren<QPushButton*>())if(button->text()==QStringLiteral("Seçilenleri kaydet")) {
+        table->selectRow(0); button->click(); break;
+    }
+    REQUIRE(table->item(0,0)->background().color()==QColor("#D4EDDA"));
 }

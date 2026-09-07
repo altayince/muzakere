@@ -108,11 +108,13 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     date_layout->addWidget(date_); date_layout->addWidget(apply_date); review_layout->addLayout(date_layout);
     review_layout->addWidget(new QLabel(QStringLiteral("Tebliğ tarihi şimdilik satırların hazırlandığı günün tarihiyle doldurulur; düzenleyebilirsiniz."),review));
     review_layout->addWidget(new QLabel(QStringLiteral("Alanları düzenleyin, kaynak metni ve uyarıları inceleyin. Onay, seçili satırların uyarılarıyla birlikte kabulüdür."),review));
+    review_layout->addWidget(new QLabel(QStringLiteral("Yeşil: Sorunsuz   •   Sarı: İnceleme gerekli   •   Kırmızı: İlerlenemiyor / onay engeli var"),review));
     auto* review_splitter=new QSplitter(Qt::Vertical,review);
     accounting_=new QTableWidget(review_splitter);
     configure(accounting_,{QStringLiteral("Durum"),QStringLiteral("Tebliğ Tarihi"),QStringLiteral("İcra Dairesi"),
         QStringLiteral("Esas Numarası"),QStringLiteral("Borç Miktarı (TL)"),QStringLiteral("Borçlu"),QStringLiteral("Borçlu TCKN/VKN"),
-        QStringLiteral("Alacaklı"),QStringLiteral("İcra Dairesi İBAN"),QStringLiteral("89/1?"),QStringLiteral("Açıklama"),QStringLiteral("Uyarılar")});
+        QStringLiteral("Alacaklı"),QStringLiteral("İcra Dairesi İBAN"),QStringLiteral("89/1?"),QStringLiteral("Açıklama"),QStringLiteral("Muhatap"),QStringLiteral("Uyarılar")});
+    accounting_->setObjectName("accountingTable");
     accounting_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     accounting_->setEditTriggers(QAbstractItemView::DoubleClicked|QAbstractItemView::EditKeyPressed);
     accounting_->setColumnWidth(2,290); accounting_->setColumnWidth(5,240); accounting_->setColumnWidth(7,280);
@@ -130,6 +132,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             const QSignalBlocker blocker(accounting_);
             accounting_->item(item->row(),0)->setText(QStringLiteral("Değiştirildi — kaydedilmedi"));
             accounting_rows_[static_cast<std::size_t>(item->row())].approved=false;
+            paintAccountingRow(item->row());
         }
     });
     connect(select_all,&QPushButton::clicked,accounting_,&QTableWidget::selectAll);
@@ -150,7 +153,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-7 — Test sıfırlama ve eski kayıtların tebliğ tarihi\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-9 — Borçlu başına satır ve renkli inceleme\n"
+        "Her borçlu kendi kimlik numarasıyla ayrı satırda. Muhatap ayrı sütunda; durumlar yeşil, sarı ve kırmızı.\n\n"
+        "MUZ-7 — Test sıfırlama ve eski kayıtların tebliğ tarihi\n"
         "Test düğmesi veritabanını temizler. Eski boş tarihler bugünün tarihiyle doldurulur ve yeniden onay bekler.\n\n"
         "MUZ-5 — Geçici tebliğ tarihi\n"
         "Yeni satırlarda bugünün tarihi kullanılır. KEP entegrasyonunda tarih KEP'ten alınacak.\n\n"
@@ -275,12 +280,32 @@ void MainWindow::showAccounting() {
         QStringList values{record.approved?QStringLiteral("Onaylı"):QStringLiteral("Onay bekliyor")};
         for (const auto& cell:record.cells) values.append(s(cell));
         QStringList warnings; for(const auto& warning:record.warnings) warnings.append(s(warning));
-        if(!record.recipient.empty())warnings.prepend(QStringLiteral("Muhatap: ")+s(record.recipient));
+        values.append(s(recipient_text(record)));
         values.append(warnings.join("; ")); row(accounting_,values);
         const int index=accounting_->rowCount()-1;
         accounting_->item(index,0)->setFlags(accounting_->item(index,0)->flags() & ~Qt::ItemIsEditable);
         accounting_->item(index,11)->setFlags(accounting_->item(index,11)->flags() & ~Qt::ItemIsEditable);
+        accounting_->item(index,12)->setFlags(accounting_->item(index,12)->flags() & ~Qt::ItemIsEditable);
         accounting_->item(index,0)->setToolTip(s(record.id)+"\n"+s(record.source_path));
+        paintAccountingRow(index);
+    }
+}
+
+void MainWindow::paintAccountingRow(int index) {
+    const QSignalBlocker blocker(accounting_);
+    auto record=accounting_rows_.at(static_cast<std::size_t>(index));
+    for(std::size_t c=0;c<column_count;++c)record.cells[c]=accounting_->item(index,static_cast<int>(c)+1)->text().toStdString();
+    const bool dirty=accounting_->item(index,0)->text().contains(QStringLiteral("kaydedilmedi"));
+    auto state=review_status(record);
+    if(dirty && state==ReviewStatus::ready)state=ReviewStatus::review;
+    const auto color=state==ReviewStatus::blocked?QColor("#F8D7DA"):state==ReviewStatus::review?QColor("#FFF3CD"):QColor("#D4EDDA");
+    const auto label=state==ReviewStatus::blocked?QStringLiteral("İlerlenemiyor"):state==ReviewStatus::review?
+        QStringLiteral("İnceleme gerekli"):QStringLiteral("Sorunsuz");
+    accounting_->item(index,0)->setText(label+" — "+(dirty?QStringLiteral("kaydedilmedi"):
+        record.approved?QStringLiteral("Onaylı"):QStringLiteral("Onay bekliyor")));
+    for(int c=0;c<accounting_->columnCount();++c) {
+        accounting_->item(index,c)->setBackground(color);
+        accounting_->item(index,c)->setForeground(QColor("#17202A"));
     }
 }
 
@@ -305,8 +330,9 @@ void MainWindow::reviewSelected(bool approve) {
                 accounting_rows_[i]=*record;
                 accounting_->item(static_cast<int>(i),0)->setText(record->approved?QStringLiteral("Onaylı"):QStringLiteral("Onay bekliyor"));
                 QStringList warnings; for(const auto& warning:record->warnings)warnings.append(s(warning));
-                if(!record->recipient.empty())warnings.prepend(QStringLiteral("Muhatap: ")+s(record->recipient));
-                accounting_->item(static_cast<int>(i),11)->setText(warnings.join("; "));
+                accounting_->item(static_cast<int>(i),11)->setText(s(recipient_text(*record)));
+                accounting_->item(static_cast<int>(i),12)->setText(warnings.join("; "));
+                paintAccountingRow(static_cast<int>(i));
             }
         }
         status_->setText(approve?QStringLiteral("Seçili satırlar onaylandı; Onaylı Excel ile dışa aktarabilirsiniz."):

@@ -36,14 +36,16 @@ one-off Python-generated workbook or external API is part of the runtime.
    approval. Other missing fields remain blank with warnings and require the
    operator's explicit review. Source hashes are checked again before export.
 
-Output columns exactly match the supplied example: Sıra No, Tebliğ Tarihi,
+The first 11 output columns match the supplied example: Sıra No, Tebliğ Tarihi,
 İcra Dairesi, Esas Numarası, Borç Miktarı (TL), Borçlu, Borçlu TCKN/VKN,
 Alacaklı, İcra Dairesi İBAN, 89/1 Haciz İhbarnamesi mi?, Açıklama.
-Recipients and warnings appear in Açıklama. Additional source/evidence worksheets
+The new columns L/M are Muhatap and Uyarılar. Recipients are not included in
+warnings or Açıklama; conflicting envelope recipients appear in Muhatap too.
+Additional source/evidence worksheets
 retain UUIDs, PDF hashes and matching confidence. Confidence is a rule weight,
 not a calibrated probability. Values beginning with `=` remain strings.
 
-Schema v2 upgrades v1 transactionally, preserving all earlier batches. New tables
+Schema v2 upgrades v1 transactionally, preserving all earlier batches. Its tables
 are `batch_archives`, `accounting_rows` and `accounting_exports`. An export records
 the intended destination and hash as `prepared` before publishing the file using
 no-overwrite rename; only a subsequent DB update records it as `published`.
@@ -71,8 +73,11 @@ It produces 27 candidate document rows: 23 first notices and four other letters
 companies from the envelope; another document's recipient list does not include
 its envelope's Banabi recipient. These three document conflicts remain in review;
 the unmatched envelope is an additional visible review row (28 rows in the draft,
-24 proposed pairs). The archive note's count
+24 proposed pairs before splitting debtors). These are document counts, not the
+current number of debtor rows. The archive note's count
 is not used to assume an expected number of output rows.
+With MUZ-9, four of those documents each have two debtors: the current draft has
+32 rows (17 green, 11 yellow, four red), preserving 28 source-document groups.
 
 For local acceptance/debugging, the same C++ service can run without UI dialogs:
 
@@ -91,3 +96,23 @@ tables, indexes and append-only audit triggers are recreated in one SQLite
 transaction; a failure rolls back the reset. No other workspace is touched.
 Original ZIP/PDF files and previously generated workbooks remain on disk. Import
 again to start a fresh test batch; old workbooks are not updated automatically.
+
+## Separate debtors and review colors (MUZ-9)
+
+Numbered debtor blocks are parsed as name/identifier pairs; a missing identifier
+stays blank on that person's row. Every person gets an independent persisted row
+and approval, sharing the source PDF, envelope, office and case. The document's
+full amount is repeated rather than allocated; do not sum sibling rows as separate
+debts. No multiple-debtor or duplicate-case warning is caused by splitting one PDF.
+
+Schema v3 separates row ID from document ID. First rows retain their old ID;
+additional IDs are deterministic per source document and debtor position. Existing
+combined rows split only if the source reproduces the stored name/ID pairs exactly
+and neither identity field was manually edited. Other fields and source links are
+preserved, approvals cleared, and replacement/audit writes commit together. An
+ambiguous legacy pair stays blocked for fresh import/review instead of guessing.
+
+Green means no detected issues, yellow means warnings or missing optional data,
+and red means an approval blocker (including recipient conflicts, invalid identity
+format, malformed dates/money or missing required fields). Unsaved valid edits are
+yellow. The UI and Excel share this classification; colors do not grant approval.

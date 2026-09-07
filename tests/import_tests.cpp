@@ -58,8 +58,8 @@ TEST_CASE("Initialize current schema and reopen the persisted workspace", "[inte
     { muz::LocalWorkspace workspace(path(f.root)); REQUIRE(workspace.batches().empty()); }
     muz::LocalWorkspace reopened(path(f.root));
     Db db(f.root);
-    REQUIRE(db.scalar("PRAGMA user_version") == 2);
-    REQUIRE(db.scalar("SELECT COUNT(*) FROM schema_migrations") == 2);
+    REQUIRE(db.scalar("PRAGMA user_version") == 3);
+    REQUIRE(db.scalar("SELECT COUNT(*) FROM schema_migrations") == 3);
     REQUIRE(reopened.batches().empty());
 }
 

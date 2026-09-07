@@ -30,7 +30,7 @@ QByteArray worksheet_view(const QByteArray& input, int last_row) {
         } else {
             writer.writeCurrentToken(reader);
             if (reader.isEndElement() && reader.name() == u"sheetData") {
-                writer.writeEmptyElement("autoFilter"); writer.writeAttribute("ref","A1:K" + QString::number(last_row));
+                writer.writeEmptyElement("autoFilter"); writer.writeAttribute("ref","A1:M" + QString::number(last_row));
             }
         }
     }
@@ -77,8 +77,8 @@ void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::fi
     identifier=body; identifier.setNumberFormat("@");
     money=body; money.setNumberFormat("#,##0.00");
     const QStringList headers={"Sıra No","Tebliğ Tarihi","İcra Dairesi","Esas Numarası","Borç Miktarı (TL)",
-        "Borçlu","Borçlu TCKN/VKN","Alacaklı","İcra Dairesi İBAN","89/1 Haciz İhbarnamesi mi?","Açıklama"};
-    const std::array<double,11> widths={9,16,48,18,21,38,27,48,32,24,70};
+        "Borçlu","Borçlu TCKN/VKN","Alacaklı","İcra Dairesi İBAN","89/1 Haciz İhbarnamesi mi?","Açıklama","Muhatap","Uyarılar"};
+    const std::array<double,13> widths={9,16,48,18,21,38,27,48,32,24,70,48,70};
     for (int column=1;column<=headers.size();++column) {
         check(workbook.currentWorksheet()->writeString(1,column,headers[column-1],header));
         workbook.setColumnWidth(column,widths[static_cast<std::size_t>(column-1)]);
@@ -86,14 +86,15 @@ void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::fi
     workbook.setRowHeight(1,34);
     int index=2;
     for (const auto& row:rows) {
+        const auto state=review_status(row);
+        body.setPatternBackgroundColor(state==ReviewStatus::blocked?QColor("#F8D7DA"):
+            state==ReviewStatus::review?QColor("#FFF3CD"):QColor("#D4EDDA"));
+        body.setFontColor(QColor("#17202A"));
+        identifier=body; identifier.setNumberFormat("@"); money=body; money.setNumberFormat("#,##0.00");
         check(workbook.write(index,1,index-1,body));
         for (std::size_t column=0;column<column_count;++column) {
             auto value=s(row.cells[column]);
             if (column==notes) {
-                if(!row.recipient.empty())value+=" | Muhatap: "+s(row.recipient);
-                QStringList warnings;
-                for (const auto& warning:row.warnings) warnings.append(s(warning));
-                if (!warnings.empty()) value += " | " + warnings.join("; ");
                 if (draft) value = "İNCELEME TASLAĞI — " + value;
             }
             if (column==amount && parse_money(row.cells[column])) {
@@ -105,8 +106,13 @@ void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::fi
                     column==debtor_id || column==iban || column==case_number ? identifier:body));
             }
         }
+        check(workbook.currentWorksheet()->writeString(index,12,s(recipient_text(row)),body));
+        QStringList warnings; for(const auto& warning:row.warnings)warnings.append(s(warning));
+        check(workbook.currentWorksheet()->writeString(index,13,warnings.join("; "),body));
         workbook.setRowHeight(index,75); ++index;
     }
+    body.setPatternBackgroundColor(Qt::white);
+    identifier=body; identifier.setNumberFormat("@");
     check(workbook.addSheet("Kaynaklar"));
     const QStringList sources={"Sıra No","Record ID","Batch ID","Belge ID","Zarf ID","Kaynak dosya","SHA-256","Eşleşme güveni","Onay durumu","Muhatap"};
     for (int c=0;c<sources.size();++c) check(workbook.currentWorksheet()->writeString(1,c+1,sources[c],header));

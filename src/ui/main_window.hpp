@@ -42,6 +42,7 @@ private:
     void refresh(const std::string& select_id = {});
     void selectBatch();
     void showAccounting();
+    void paintAccountingRow(int index);
     void reviewSelected(bool approve);
     void exportExcel(bool draft);
     void resetDatabaseForTesting();

@@ -37,10 +37,20 @@ records your explicit review. **Onaylı Excel** exports approved rows; **İncele
 Excel’i** exports all rows as a visibly marked draft. Conflicting envelope/recipient
 rows cannot be approved; keep them in review. Existing output files are never overwritten.
 
-The first sheet has the sample's 11 columns, frozen header and filter. **Kaynaklar**
+The first sheet keeps the sample's 11 columns and adds **Muhatap** and **Uyarılar**,
+with a frozen header and filter. Each debtor has a separate row with their own
+TCKN/VKN, shared document/case details and the document's full amount (not divided;
+amounts on sibling rows must not be added as independent debts). Multiple debtors
+alone no longer generate a warning. **Kaynaklar**
 holds stable record IDs, hashes, recipients and document links by ID; **İnceleme**
 holds extraction snippets and manual edits. The reference workbook supplies the
 layout only; none of its example debtor rows is bundled in the program.
+
+Rows are green when no issues are detected, yellow when review is needed, and red
+when an approval blocker exists. The desktop updates colors as fields are edited;
+Excel uses the same saved-data classification. Approval remains a separate action.
+Existing combined rows split automatically only when source names and IDs match
+exactly and were not manually edited; split rows require fresh approval.
 
 ## Linux / existing Qt toolchain
 

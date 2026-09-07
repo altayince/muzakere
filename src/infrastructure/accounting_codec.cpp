@@ -14,6 +14,9 @@ QString encode_row(const AccountingRow& row) {
     object["sha256"] = QString::fromStdString(row.sha256);
     object["source_text"] = QString::fromStdString(row.source_text);
     object["recipient"] = QString::fromStdString(row.recipient);
+    object["conflicting_recipient"] = QString::fromStdString(row.conflicting_recipient);
+    object["debtor_index"] = row.debtor_index;
+    object["identity_conflict"] = row.identity_conflict;
     object["pair_conflict"] = row.pair_conflict;
     object["match_confidence"] = row.match_confidence;
     object["approved"] = row.approved;
@@ -41,6 +44,9 @@ AccountingRow decode_row(const QString& payload) {
     row.sha256 = o["sha256"].toString().toStdString();
     row.source_text = o["source_text"].toString().toStdString();
     row.recipient = o["recipient"].toString().toStdString();
+    row.conflicting_recipient = o["conflicting_recipient"].toString().toStdString();
+    row.debtor_index = o["debtor_index"].toInt();
+    row.identity_conflict = o["identity_conflict"].toBool();
     row.pair_conflict = o["pair_conflict"].toBool();
     row.match_confidence = o["match_confidence"].toDouble();
     row.approved = o["approved"].toBool();

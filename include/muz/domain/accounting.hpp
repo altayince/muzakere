@@ -25,6 +25,9 @@ struct AccountingRow {
     std::string sha256;
     std::string source_text;
     std::string recipient;
+    std::string conflicting_recipient;
+    int debtor_index{};
+    bool identity_conflict{};
     bool pair_conflict{};
     double match_confidence{};
     std::array<std::string, column_count> cells;
@@ -35,4 +38,7 @@ struct AccountingRow {
 [[nodiscard]] std::optional<std::int64_t> parse_money(const std::string& value);
 [[nodiscard]] std::string format_money(std::int64_t cents);
 [[nodiscard]] bool can_approve(const AccountingRow& row);
+enum class ReviewStatus { ready, review, blocked };
+[[nodiscard]] ReviewStatus review_status(const AccountingRow& row);
+[[nodiscard]] std::string recipient_text(const AccountingRow& row);
 } // namespace muz
