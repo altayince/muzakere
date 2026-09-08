@@ -20,14 +20,16 @@ namespace muz {
 namespace {
 QString text(const std::string& value){return QString::fromStdString(value);}
 std::string uuid(){return QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();}
-std::optional<std::int64_t> numeric_cents(const QXlsx::Cell* cell, bool& invalid) {
+}
+std::optional<std::int64_t> accounting_cents(const QXlsx::Cell* cell, bool& invalid) {
     invalid=false;
     if(!cell)return {};
     if(cell->hasFormula() || cell->isDateTime() || cell->cellType()==QXlsx::Cell::BooleanType ||
        cell->cellType()==QXlsx::Cell::ErrorType){invalid=true;return {};}
     const auto value=cell->value();
     if(!value.isValid() || value.toString().trimmed().isEmpty())return {};
-    if(cell->cellType()==QXlsx::Cell::NumberType) {
+    // QXlsx exposes Excel's omitted (default numeric) cell type as CustomType.
+    if(cell->cellType()==QXlsx::Cell::NumberType || cell->cellType()==QXlsx::Cell::CustomType) {
         bool ok=false; const double amount=value.toDouble(&ok), rounded=std::round(amount*100.0);
         if(!ok || !std::isfinite(amount) || std::abs(rounded)>900000000000000.0 ||
            std::abs(amount*100.0-rounded)>0.001){invalid=true;return {};}
@@ -39,7 +41,6 @@ std::optional<std::int64_t> numeric_cents(const QXlsx::Cell* cell, bool& invalid
     const auto parsed=parse_money(raw.toStdString());
     if(!parsed){invalid=true;return {};}
     return negative?-*parsed:*parsed;
-}
 }
 
 QString encode_response(const ResponseRow& row) {
@@ -65,7 +66,9 @@ AccountingReturn read_accounting_return(const QByteArray& bytes) {
     QTemporaryDir validated; if(!validated.isValid())throw Error(ErrorCode::file_io);
     extract_zip(bytes,native_path(validated.path()));
     QBuffer buffer;buffer.setData(bytes);buffer.open(QIODevice::ReadOnly);
-    QXlsx::Document book(&buffer);if(!book.load() || !book.selectSheet("Kaynaklar"))throw Error(ErrorCode::invalid_input);
+    QXlsx::Document book(&buffer);if(!book.load())throw Error(ErrorCode::invalid_input);
+    if(book.sheetNames().contains("HAMDATA"))return read_hamdata_return(book);
+    if(!book.selectSheet("Kaynaklar"))throw Error(ErrorCode::invalid_input);
     struct Snapshot {AccountingRow row;bool draft{};bool demo{};};
     QMap<int,Snapshot> snapshots;QSet<QString> ids;
     const int metadata_end=book.dimension().lastRow();
@@ -110,13 +113,13 @@ AccountingReturn read_accounting_return(const QByteArray& bytes) {
             else expected=text(row.source.cells[static_cast<std::size_t>(c-1)]);
             if(c==10 && snapshot.draft)expected="İNCELEME TASLAĞI — "+expected;
             if(c==4 && parse_money(row.source.cells[amount])) {
-                bool invalid=false; const auto actual=numeric_cents(cell.get(),invalid);
+                bool invalid=false; const auto actual=accounting_cents(cell.get(),invalid);
                 if(invalid || actual!=parse_money(row.source.cells[amount]))changed=true;
             } else if(book.read(r,columns[headers[c]]).toString()!=expected)changed=true;
         }
         if(changed)row.errors.push_back("Dosya/borçlu alanları gönderilen Excel ile uyuşmuyor; yalnızca Muhasebe sütununu değiştirin");
         const auto accounting=book.cellAt(r,columns["Muhasebe"]);
-        bool invalid=false;row.available_cents=numeric_cents(accounting.get(),invalid);
+        bool invalid=false;row.available_cents=accounting_cents(accounting.get(),invalid);
         row.accounting_input=accounting?accounting->value().toString().toStdString():std::string{};
         if(invalid)row.errors.push_back("Muhasebe hücresi boş veya en çok iki ondalıklı sayı olmalı; formül/tarih/metin kabul edilmez");
         if(!row.source.approved && !row.demo)row.errors.push_back("Muhasebeye onaylı Excel gönderilmeli; bu satır onaylanmamış");

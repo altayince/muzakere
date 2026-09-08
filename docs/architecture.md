@@ -81,8 +81,9 @@ work. Do not treat this first increment as production acceptance of those areas.
 3. Implemented in MUZ-3: matching proposals plus evidence and score;
    conflicting signals always require review. Manual pair reassignment remains future work.
 4. Review extracted fields and create/update approved cases with stable UUIDs.
-5. Implemented: XLSX export and return import keyed by stable row IDs, with
-   duplicate/missing/new/changed identity validation. Rows can be reordered.
+5. Implemented: HAMDATA/MUHASEBE export and debtor-identity return join with one
+   accounting reply per debtor and independent PDFs per case. Hidden snapshots
+   protect generated rows from accidental edits; real external books also work.
 6. Implemented in MUZ-11: bundled VAR/YOK templates, profile fields, HTML preview
    and native Qt PDF generation for approved rows (or explicitly marked test data).
    Each output and rendered template has a recorded SHA-256 and publication state.

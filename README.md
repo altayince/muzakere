@@ -37,23 +37,24 @@ during KEP integration, replacing the temporary default.
 Older batches with missing, never-edited dates receive this default when opened
 and require approval again. Existing dates and deliberate manual edits are preserved.
 **Seçilenleri kaydet** saves corrections without approval. **Seçilenleri onayla**
-records your explicit review. **Onaylı Excel** exports approved rows; **İnceleme
-Excel’i** exports all rows as a visibly marked draft. Conflicting envelope/recipient
-rows cannot be approved; keep them in review. Existing output files are never overwritten.
+records your explicit review. **Muhasebesiz hamdata oluştur** exports all saved
+document rows to HAMDATA. **Muhasebeli ham data oluştur** also creates MUHASEBE,
+deduplicated by TCKN/VKN with empty reply cells. Conflicting envelope/recipient
+rows remain blocked for response generation. Existing files are never overwritten.
 
-The first sheet keeps the sample's 11 columns and adds **Muhatap**, **Uyarılar**
-and an empty rightmost **Muhasebe** column,
-with a frozen header and filter. Each debtor has a separate row with their own
+HAMDATA matches the supplied real workbook's 11 columns: service date, reply
+deadline, delivery channel, subject, recipient, office, case, debt amount, debtor,
+TCKN/VKN and creditor. Unknown deadline/channel values remain blank. Each debtor
+has a separate document row with their own
 TCKN/VKN, shared document/case details and the document's full amount (not divided;
 amounts on sibling rows must not be added as independent debts). Multiple debtors
-alone no longer generate a warning. **Kaynaklar**
-holds stable record IDs, hashes, recipients and document links by ID; **İnceleme**
-holds extraction snippets and manual edits. The reference workbook supplies the
-layout only; none of its example debtor rows is bundled in the program.
+alone no longer generate a warning. Hidden **_MUZ** metadata retains source IDs
+and blockers without adding visible columns. Real external HAMDATA/MUHASEBE
+workbooks can also be imported without this metadata. Client rows are never bundled.
 
 Rows are green when no issues are detected, yellow when review is needed, and red
 when an approval blocker exists. The desktop updates colors as fields are edited;
-Excel uses the same saved-data classification. Approval remains a separate action.
+The response tab also distinguishes warnings from blockers. Approval remains a separate action.
 Existing combined rows split automatically only when source names and IDs match
 exactly and were not manually edited; split rows require fresh approval.
 
@@ -80,12 +81,13 @@ ctest --preset dev
 
 See [architecture](docs/architecture.md), [dependency decisions](docs/dependencies.md),
 [schema v1](migrations/001_initial.sql), and [workflow](WORKFLOW.md).
-The second main tab imports the returned workbook: a number (including zero)
-means VAR; a blank cell means YOK. Invalid cells and changed debtor identities
-block PDF generation for that row. Preview the response, check lawyer/address,
-then generate selected valid rows. The original ZIP is not needed on the second PC.
-The separate **Test: muhasebe dönüşü oluştur** export simulates accounting using
-random amounts and blanks; its PDFs visibly identify test data.
+The second main tab imports HAMDATA/MUHASEBE directly. A debtor's reply applies
+to every associated case row; identical names with different IDs stay separate.
+Numbers (including zero and signed amounts) select VAR, blank amounts select YOK.
+Missing/duplicate identity matches and invalid cells block the affected rows.
+The former random test export button has been removed. Preview the response,
+check lawyer/address, then generate selected valid rows. The original ZIP is not
+needed on the second PC. Legacy MUZ-11 workbooks remain readable.
 See [accounting return details](docs/accounting-return.md).
 Keep real client documents out of Git. See [ZIP-to-Excel details](docs/zip-to-excel.md).
 

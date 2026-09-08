@@ -46,7 +46,7 @@ private:
     void showAccounting();
     void paintAccountingRow(int index);
     void reviewSelected(bool approve);
-    void exportExcel(bool draft, bool demo = false);
+    void exportExcel(bool with_accounting);
     void resetDatabaseForTesting();
     void setBusy(bool busy);
     bool hasUnsavedEdits() const;

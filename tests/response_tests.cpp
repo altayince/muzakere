@@ -19,6 +19,7 @@
 #include <QTabWidget>
 #include <QElapsedTimer>
 #include <QThread>
+#include <miniz.h>
 
 namespace {
 std::vector<muz::AccountingRow> samples(int count=4) {
@@ -34,6 +35,20 @@ std::vector<muz::AccountingRow> samples(int count=4) {
     return rows;
 }
 QByteArray bytes(const QString& file) {QFile f(file);REQUIRE(f.open(QIODevice::ReadOnly));return f.readAll();}
+QByteArray excel_default_numeric_types(const QByteArray& input) {
+    mz_zip_archive source{},target{};REQUIRE(mz_zip_reader_init_mem(&source,input.constData(),static_cast<size_t>(input.size()),0));
+    REQUIRE(mz_zip_writer_init_heap(&target,0,0));
+    for(mz_uint i=0;i<mz_zip_reader_get_num_files(&source);++i) {
+        mz_zip_archive_file_stat stat{};REQUIRE(mz_zip_reader_file_stat(&source,i,&stat));
+        QByteArray data(static_cast<qsizetype>(stat.m_uncomp_size),Qt::Uninitialized);
+        REQUIRE(mz_zip_reader_extract_to_mem(&source,i,data.data(),static_cast<size_t>(data.size()),0));
+        if(QString::fromUtf8(stat.m_filename).startsWith("xl/worksheets/"))data.replace(" t=\"n\"","");
+        REQUIRE(mz_zip_writer_add_mem(&target,stat.m_filename,data.constData(),static_cast<size_t>(data.size()),MZ_DEFAULT_COMPRESSION));
+    }
+    void* output=nullptr;size_t size=0;REQUIRE(mz_zip_writer_finalize_heap_archive(&target,&output,&size));
+    QByteArray result(static_cast<const char*>(output),static_cast<qsizetype>(size));mz_free(output);
+    mz_zip_writer_end(&target);mz_zip_reader_end(&source);return result;
+}
 void wait(muz::ResponsePanel& panel) {
     QElapsedTimer timer;timer.start();while(panel.busy() && timer.elapsed()<15000){QApplication::processEvents();QThread::msleep(10);}
     QApplication::processEvents();REQUIRE_FALSE(panel.busy());
@@ -123,4 +138,66 @@ TEST_CASE("Second workflow tab imports, previews and generates PDFs with native 
     panel.findChild<QLineEdit*>("responseAddress")->setText(QStringLiteral("TEST ADRES"));
     panel.findChild<QPushButton*>("selectValidResponses")->click();panel.generatePdfs(muz::native_path(temp.path()+"/out"));wait(panel);
     REQUIRE_FALSE(workspace.response_rows(workspace.accounting_returns()[0].id)[0].output_pdf.empty());
+}
+
+TEST_CASE("HAMDATA preserves cases and MUHASEBE deduplicates only by debtor identity", "[integration][hamdata]") {
+    QTemporaryDir temp;auto rows=samples(3);
+    rows[1].cells[muz::debtor_id]=rows[0].cells[muz::debtor_id];rows[1].cells[muz::debtor]=rows[0].cells[muz::debtor];
+    rows[1].cells[muz::office]="İSTANBUL İCRA DAİRESİ";rows[1].cells[muz::case_number]="2026/99";
+    rows[2].cells[muz::debtor]=rows[0].cells[muz::debtor]; // Same name, different identity: keep separate.
+    const auto output=temp.path()+"/accounting.xlsx";
+    muz::write_hamdata_xlsx(rows,muz::native_path(output),true);
+    QXlsx::Document book(output);REQUIRE(book.load());REQUIRE(book.selectSheet("MUHASEBE"));
+    REQUIRE(book.dimension().lastRow()==3);REQUIRE(book.read(1,1).toString()=="Borçlu T.C/Vergi No");
+    REQUIRE(book.read(2,4).toString().isEmpty());REQUIRE(book.read(3,4).toString().isEmpty());
+    REQUIRE(book.write(2,3,9876543210.0));REQUIRE(book.write(2,4,125.5));
+    REQUIRE(book.selectSheet("HAMDATA"));REQUIRE(book.dimension().lastRow()==4);REQUIRE(book.dimension().lastColumn()==11);
+    const auto returned=temp.path()+"/return.xlsx";REQUIRE(book.saveAs(returned));
+    const auto data=muz::read_accounting_return(bytes(returned));REQUIRE(data.rows.size()==3);
+    for(const auto& row:data.rows)REQUIRE(row.errors.empty());
+    REQUIRE(data.rows[0].available_cents==12550);REQUIRE(data.rows[1].available_cents==12550);
+    REQUIRE_FALSE(data.rows[2].available_cents);REQUIRE(data.rows[0].source.id==rows[0].id);
+    REQUIRE(data.rows[1].source.cells[muz::case_number]=="2026/99");
+    const auto raw=temp.path()+"/raw.xlsx";muz::write_hamdata_xlsx(rows,muz::native_path(raw),false);
+    QXlsx::Document rawbook(raw);REQUIRE(rawbook.load());REQUIRE(rawbook.sheetNames().contains("HAMDATA"));REQUIRE_FALSE(rawbook.sheetNames().contains("MUHASEBE"));
+}
+
+TEST_CASE("Real-format return needs no private metadata and one reply produces separate case PDFs", "[integration][hamdata][pdf]") {
+    QTemporaryDir temp;auto rows=samples(2);rows[1].cells[muz::debtor_id]=rows[0].cells[muz::debtor_id];rows[1].cells[muz::debtor]=rows[0].cells[muz::debtor];
+    rows[1].cells[muz::case_number]="2026/123";
+    const auto output=temp.path()+"/real-format.xlsx";muz::write_hamdata_xlsx(rows,muz::native_path(output),true);
+    QXlsx::Document book(output);REQUIRE(book.load());REQUIRE(book.deleteSheet("_MUZ"));REQUIRE(book.selectSheet("MUHASEBE"));
+    REQUIRE(book.write(2,3,2001234567));REQUIRE(book.write(2,4,0));
+    const auto returned=temp.path()+"/returned.xlsx";REQUIRE(book.saveAs(returned));
+    muz::LocalWorkspace workspace(muz::native_path(temp.path()+"/ws"));const auto data=workspace.import_accounting_return(muz::native_path(returned));
+    REQUIRE(data.rows.size()==2);for(const auto& row:data.rows){REQUIRE(row.errors.empty());REQUIRE(row.available_cents==0);REQUIRE_FALSE(row.demo);}
+    const auto folder=workspace.generate_responses(data.id,{data.rows[0].id,data.rows[1].id},muz::native_path(temp.path()+"/pdfs"),{"Av. TEST","TEST ADRES"});
+    REQUIRE(QDir(muz::qpath(folder)).entryList({"*_VAR.pdf"},QDir::Files).size()==2);
+    REQUIRE(book.write(3,1,QString::fromStdString(rows[0].cells[muz::debtor_id])));REQUIRE(book.write(3,2,"TEST"));
+    const auto duplicate=temp.path()+"/duplicate.xlsx";REQUIRE(book.saveAs(duplicate));
+    const auto bad=muz::read_accounting_return(bytes(duplicate));for(const auto& row:bad.rows)REQUIRE_FALSE(row.errors.empty());
+}
+
+TEST_CASE("Missing reply and invalid or multiple account amounts never silently become YOK", "[integration][hamdata]") {
+    QTemporaryDir temp;const auto output=temp.path()+"/out.xlsx";muz::write_hamdata_xlsx(samples(),muz::native_path(output),true);
+    QXlsx::Document book(output);REQUIRE(book.load());REQUIRE(book.selectSheet("MUHASEBE"));
+    REQUIRE(book.write(2,1,"99999999999"));
+    REQUIRE(book.currentWorksheet()->writeFormula(3,4,QXlsx::CellFormula("1+1")));
+    REQUIRE(book.write(4,4,-10.5));REQUIRE(book.write(4,6,-5.5));
+    REQUIRE(book.write(5,3,2000000000)); // Account reference alone is not money.
+    const auto returned=temp.path()+"/return.xlsx";REQUIRE(book.saveAs(returned));const auto data=muz::read_accounting_return(bytes(returned));
+    REQUIRE_FALSE(data.rows[0].errors.empty());REQUIRE_FALSE(data.rows[1].errors.empty());REQUIRE_FALSE(data.rows[2].errors.empty());
+    REQUIRE(data.rows[3].errors.empty());REQUIRE_FALSE(data.rows[3].available_cents);
+}
+
+TEST_CASE("Excel default numeric cells retain dates, negative balances and leading VKN zeros", "[integration][hamdata]") {
+    QTemporaryDir temp;const auto output=temp.path()+"/out.xlsx";muz::write_hamdata_xlsx(samples(1),muz::native_path(output),true);
+    QXlsx::Document book(output);REQUIRE(book.load());REQUIRE(book.deleteSheet("_MUZ"));
+    REQUIRE(book.selectSheet("HAMDATA"));REQUIRE(book.write(2,10,700810240));
+    REQUIRE(book.selectSheet("MUHASEBE"));REQUIRE(book.write(2,1,700810240));REQUIRE(book.write(2,4,-10.57));
+    const auto returned=temp.path()+"/return.xlsx";REQUIRE(book.saveAs(returned));
+    const auto data=muz::read_accounting_return(excel_default_numeric_types(bytes(returned)));
+    REQUIRE(data.rows[0].errors.empty());REQUIRE(data.rows[0].available_cents==-1057);
+    REQUIRE(data.rows[0].source.cells[muz::debtor_id]=="0700810240");
+    REQUIRE(data.rows[0].source.cells[muz::service_date]=="07.09.2026");
 }

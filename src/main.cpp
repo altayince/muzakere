@@ -36,7 +36,8 @@ int main(int argc, char* argv[]) {
     parser.addOption({"smoke-test", "Exercise desktop startup and background import using temporary synthetic data"});
     parser.addOption({"import-zip", "Import a ZIP and prepare accounting rows without opening the UI", "path"});
     parser.addOption({"export-draft", "Export the imported rows as a clearly marked review draft", "xlsx"});
-    parser.addOption({"export-demo", "Export a separate test accounting return with random amounts and blank cells", "xlsx"});
+    parser.addOption({"export-hamdata", "Export HAMDATA without an accounting sheet", "xlsx"});
+    parser.addOption({"export-accounting", "Export HAMDATA with deduplicated blank MUHASEBE sheet", "xlsx"});
     parser.addOption({"import-return", "Import an application-generated accounting return workbook", "xlsx"});
     parser.addOption({"generate-pdfs", "Generate PDFs for valid imported return rows", "directory"});
     parser.addOption({"lawyer", "Response lawyer name override", "name"});
@@ -54,7 +55,8 @@ int main(int argc, char* argv[]) {
             const auto batch=workspace.import_archive(path(parser.value("import-zip")));
             const auto rows=workspace.prepare_accounting(batch.batch.id);
             if(parser.isSet("export-draft")) workspace.export_accounting(batch.batch.id,path(parser.value("export-draft")),true);
-            if(parser.isSet("export-demo")) workspace.export_demo_accounting(batch.batch.id,path(parser.value("export-demo")));
+            if(parser.isSet("export-hamdata")) workspace.export_hamdata(batch.batch.id,path(parser.value("export-hamdata")),false);
+            if(parser.isSet("export-accounting")) workspace.export_hamdata(batch.batch.id,path(parser.value("export-accounting")),true);
             QFile output; output.open(stdout,QIODevice::WriteOnly);
             output.write(QJsonDocument(QJsonObject{{"batch_id",QString::fromStdString(batch.batch.id)},
                 {"imported_documents",static_cast<int>(batch.batch.imported_count)},
@@ -100,6 +102,9 @@ int main(int argc, char* argv[]) {
         }
         return app.exec();
     } catch (const muz::Error& error) {
+        if(parser.isSet("import-zip") || parser.isSet("import-return")) {
+            QFile output;output.open(stderr,QIODevice::WriteOnly);output.write(error.what());output.write("\n");
+        }
         if (!smoke && !parser.isSet("import-zip") && !parser.isSet("import-return")) QMessageBox::critical(nullptr, QStringLiteral("Çalışma alanı açılamadı"),
             QStringLiteral("Hata kodu: ") + QString::fromUtf8(error.what()));
         return 1;

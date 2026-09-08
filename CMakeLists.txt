@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Muzakere VERSION 0.4.0 LANGUAGES C CXX)
+project(Muzakere VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,7 @@ target_sources(muz_infrastructure PRIVATE src/infrastructure/zip_import.cpp
     src/infrastructure/pdf_text.cpp src/infrastructure/document_parser.cpp
     src/infrastructure/accounting_codec.cpp src/infrastructure/accounting_export.cpp)
 target_sources(muz_infrastructure PRIVATE src/infrastructure/accounting_return.cpp
+    src/infrastructure/hamdata_workbook.cpp
     src/infrastructure/response_pdf.cpp resources/response_templates.qrc)
 target_link_libraries(muz_infrastructure PUBLIC muz_application PRIVATE Qt6::Core Qt6::Sql QXlsx::QXlsx miniz)
 target_include_directories(muz_infrastructure PRIVATE src/infrastructure)

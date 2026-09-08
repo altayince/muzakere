@@ -43,6 +43,7 @@ public:
     virtual void review_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows) = 0;
     virtual void export_accounting(const std::string& batch_id, const std::filesystem::path& output, bool draft) = 0;
     virtual void export_demo_accounting(const std::string& batch_id, const std::filesystem::path& output) = 0;
+    virtual void export_hamdata(const std::string& batch_id, const std::filesystem::path& output, bool with_accounting) = 0;
     virtual AccountingReturn import_accounting_return(const std::filesystem::path& input) = 0;
     virtual std::vector<AccountingReturn> accounting_returns() = 0;
     virtual std::vector<ResponseRow> response_rows(const std::string& return_id) = 0;

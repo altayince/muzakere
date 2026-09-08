@@ -100,9 +100,8 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     auto* select_all=button(QStringLiteral("Tümünü seç"));
     auto* save=button(QStringLiteral("Seçilenleri kaydet"));
     auto* approve=button(QStringLiteral("Seçilenleri onayla"));
-    auto* draft=button(QStringLiteral("İnceleme Excel’i"));
-    auto* export_button=button(QStringLiteral("Onaylı Excel"));
-    auto* demo_button=button(QStringLiteral("Test: muhasebe dönüşü oluştur"));
+    auto* draft=button(QStringLiteral("Muhasebesiz hamdata oluştur"));
+    auto* export_button=button(QStringLiteral("Muhasebeli ham data oluştur"));
     review_layout->addLayout(toolbar);
     auto* date_layout=new QHBoxLayout;
     date_=new QLineEdit(review); date_->setPlaceholderText(QStringLiteral("Tebliğ tarihini değiştir: gg.aa.yyyy"));
@@ -143,9 +142,8 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     connect(apply_date,&QPushButton::clicked,this,[this] {
         for (const auto& index:accounting_->selectionModel()->selectedRows()) accounting_->item(index.row(),1)->setText(date_->text());
     });
-    connect(draft,&QPushButton::clicked,this,[this]{exportExcel(true);});
-    connect(export_button,&QPushButton::clicked,this,[this]{exportExcel(false);});
-    connect(demo_button,&QPushButton::clicked,this,[this]{exportExcel(true,true);});
+    connect(draft,&QPushButton::clicked,this,[this]{exportExcel(false);});
+    connect(export_button,&QPushButton::clicked,this,[this]{exportExcel(true);});
     connect(prepare,&QPushButton::clicked,this,[this] {
         if (selected_batch_.empty() || busy()) return;
         if(hasUnsavedEdits()){status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin."));return;}
@@ -156,7 +154,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-11 — Muhasebe dönüşü ve PDF cevapları\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-13 — Gerçek HAMDATA / MUHASEBE düzeni\n"
+        "Muhasebe T.C./vergi numarasıyla tekilleşir; dönen tutar borçlunun tüm dosyalarına bağlanır. Rastgele dönüş düğmesi kaldırıldı.\n\n"
+        "MUZ-11 — Muhasebe dönüşü ve PDF cevapları\n"
         "İki ana sekme, boş Muhasebe sütunu, test dönüş Excel’i, VAR/YOK önizleme ve satır başına PDF.\n\n"
         "MUZ-9 — Borçlu başına satır ve renkli inceleme\n"
         "Her borçlu kendi kimlik numarasıyla ayrı satırda. Muhatap ayrı sütunda; durumlar yeşil, sarı ve kırmızı.\n\n"
@@ -346,24 +346,23 @@ void MainWindow::reviewSelected(bool approve) {
                 paintAccountingRow(static_cast<int>(i));
             }
         }
-        status_->setText(approve?QStringLiteral("Seçili satırlar onaylandı; Onaylı Excel ile dışa aktarabilirsiniz."):
+        status_->setText(approve?QStringLiteral("Seçili satırlar onaylandı; hamdata düğmeleriyle dışa aktarabilirsiniz."):
             QStringLiteral("Seçili satırlardaki değişiklikler kaydedildi."));
     } catch(const Error&){status_->setText(QStringLiteral("Kayıt başarısız. Çelişkili zarf/muhatap satırlarını onaylamayın. Daire, esas, borçlu, Evet/Hayır, tarih (gg.aa.yyyy) ve tutarı (1234,56) kontrol edin."));}
 }
 
-void MainWindow::exportExcel(bool draft,bool demo) {
+void MainWindow::exportExcel(bool with_accounting) {
     if (selected_batch_.empty()) return;
     for(int i=0;i<accounting_->rowCount();++i) if(accounting_->item(i,0)->text().contains(QStringLiteral("kaydedilmedi"))) {
         status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin veya onaylayın."));return;
     }
     const auto output=QFileDialog::getSaveFileName(this,QStringLiteral("Excel çıktısı için yeni dosya adı seçin"),
-        demo?"TEST_Muhasebe_Donusu.xlsx":draft?"Icra_Dosyalari_Inceleme.xlsx":"Icra_Dosyalari.xlsx","Excel (*.xlsx)");
+        with_accounting?"Muhasebeli_Hamdata.xlsx":"Hamdata.xlsx","Excel (*.xlsx)");
     if(output.isEmpty())return;
     try {
-        if(demo)workspace_.export_demo_accounting(selected_batch_,native(output));
-        else workspace_.export_accounting(selected_batch_,native(output),draft);
+        workspace_.export_hamdata(selected_batch_,native(output),with_accounting);
         status_->setText(QStringLiteral("Excel oluşturuldu: ")+output);
-    } catch(const Error&){status_->setText(QStringLiteral("Excel oluşturulamadı. Yeni bir .xlsx dosya adı kullanın; onaylı çıktı için önce satırları onaylayın."));}
+    } catch(const Error&){status_->setText(QStringLiteral("Excel oluşturulamadı. Yeni bir .xlsx dosya adı kullanın ve kaynak belgeleri kontrol edin."));}
 }
 
 void MainWindow::resetDatabaseForTesting() {

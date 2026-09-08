@@ -301,7 +301,7 @@ TEST_CASE("Desktop approval retains other edits and exports the displayed servic
         return nullptr;
     };
     auto* approve=button(QStringLiteral("Seçilenleri onayla")); REQUIRE(approve!=nullptr);
-    auto* export_button=button(QStringLiteral("Onaylı Excel")); REQUIRE(export_button!=nullptr);
+    auto* export_button=button(QStringLiteral("Muhasebeli ham data oluştur")); REQUIRE(export_button!=nullptr);
     table->item(0,1)->setText("01.09.2026"); table->item(1,1)->setText("02.09.2026");
     table->selectRow(0); approve->click();
     REQUIRE(table->item(1,1)->text()=="02.09.2026");
@@ -318,8 +318,9 @@ TEST_CASE("Desktop approval retains other edits and exports the displayed servic
     });
     export_button->click(); REQUIRE(dialog_seen);
     QXlsx::Document book(output); REQUIRE(book.load());
-    REQUIRE(book.read(2,2).toString()==table->item(0,1)->text());
-    REQUIRE(book.read(3,2).toString()==table->item(1,1)->text());
+    REQUIRE(book.selectSheet("HAMDATA"));
+    REQUIRE(book.read(2,1).toDateTime().date().toString("dd.MM.yyyy")==table->item(0,1)->text());
+    REQUIRE(book.read(3,1).toDateTime().date().toString("dd.MM.yyyy")==table->item(1,1)->text());
 }
 
 TEST_CASE("Test reset clears database and UI and permits reimport without deleting files", "[integration][desktop][reset]") {

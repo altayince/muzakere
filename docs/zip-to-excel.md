@@ -1,5 +1,10 @@
 # ZIP to accounting Excel (MUZ-3)
 
+MUZ-13 replaces the visible export with the real HAMDATA/MUHASEBE layout and two
+raw/with-accounting buttons. See [current workflow](accounting-return.md). The
+older column layout and draft/approved export details below describe the retained
+legacy adapter, not the current desktop export buttons.
+
 The desktop application owns the full workflow. The user supplies a ZIP; no
 one-off Python-generated workbook or external API is part of the runtime.
 

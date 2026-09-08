@@ -29,7 +29,7 @@ ResponsePanel::ResponsePanel(Workspace& workspace,std::function<void(bool)> acti
     :QWidget(parent),workspace_(workspace),activity_(std::move(activity)) {
     auto* layout=new QVBoxLayout(this);
     layout->addWidget(new QLabel(QStringLiteral("Muhasebe dönüşü → VAR/YOK cevabı → dosya başına PDF"),this));
-    auto* info=new QLabel(QStringLiteral("Muhasebe sütununda sayı varsa VAR (0 dahil), boşsa YOK. Önizlemeyi kontrol edip uygun satırların PDF’lerini oluşturun."),this);
+    auto* info=new QLabel(QStringLiteral("HAMDATA ve MUHASEBE sayfalarını içeren dönüş Excel’ini yükleyin. Tutar T.C./vergi numarasıyla borçlunun tüm dosyalarına bağlanır. Sayı VAR (0 dahil), boş tutar YOK; her dosyaya ayrı PDF."),this);
     info->setWordWrap(true);layout->addWidget(info);
     auto* toolbar=new QHBoxLayout;
     auto button=[&](const QString& label,const char* name) {
@@ -57,7 +57,7 @@ ResponsePanel::ResponsePanel(Workspace& workspace,std::function<void(bool)> acti
     preview_=new QTextBrowser(detail);preview_->setObjectName("responsePreview");
     preview_->setOpenExternalLinks(false);preview_->setOpenLinks(false);
     detail->setSizes({650,450});vertical->setSizes({150,550});layout->addWidget(vertical,1);
-    status_=new QLabel(QStringLiteral("Dönen Excel’i yükleyin. Gönderilen dosyadaki diğer sütunları ve Kaynaklar sayfasını koruyun."),this);
+    status_=new QLabel(QStringLiteral("Dönen Excel’i yükleyin. HAMDATA dosya satırlarını, MUHASEBE tekil borçluları içerir."),this);
     status_->setWordWrap(true);status_->setTextFormat(Qt::PlainText);layout->addWidget(status_);
     connect(upload,&QPushButton::clicked,this,[this]{const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("Muhasebeden dönen Excel"),{},"Excel (*.xlsx)");if(!file.isEmpty())importWorkbook(path(file));});
     connect(select,&QPushButton::clicked,this,[this] {
@@ -74,7 +74,7 @@ ResponsePanel::ResponsePanel(Workspace& workspace,std::function<void(bool)> acti
     connect(&watcher_,&QFutureWatcher<Outcome>::finished,this,[this] {
         const auto result=watcher_.result();setBusy(false);
         if(!result.error.empty()) {
-            status_->setText(QStringLiteral("İşlem tamamlanamadı. Uygulamanın ürettiği Excel’i kullanın; yalnızca Muhasebe sütununu değiştirin. PDF için geçerli satırları seçin ve vekil/adres bilgilerini doldurun. Hata: ")+s(result.error));
+            status_->setText(QStringLiteral("İşlem tamamlanamadı. HAMDATA/MUHASEBE sayfalarını ve T.C./vergi numaralarını kontrol edin. PDF için geçerli satırları seçin ve vekil/adres bilgilerini doldurun. Hata: ")+s(result.error));
             return;
         }
         reload(result.return_id);
@@ -110,11 +110,14 @@ void ResponsePanel::showRows() {
         int valid=0,var=0;
         for(const auto& item:rows_) {
             const int r=table_->rowCount();table_->insertRow(r);QStringList errors;for(const auto& e:item.errors)errors.append(s(e));
-            const auto state=item.errors.empty()?(item.demo?QStringLiteral("TEST — Hazır"):QStringLiteral("Hazır")):QStringLiteral("İnceleme gerekli");
+            for(const auto& warning:item.source.warnings)errors.append(s(warning));
+            const auto state=item.errors.empty()?(item.demo?QStringLiteral("TEST — Hazır"):
+                item.source.warnings.empty()?QStringLiteral("Hazır"):QStringLiteral("Kontrol edin")):QStringLiteral("İlerlenemiyor");
             const QStringList values={state,s(item.source.cells[office]),s(item.source.cells[case_number]),s(item.source.cells[debtor]),
                 s(item.source.cells[debtor_id]),s(item.source.recipient),s(item.accounting_input),
                 item.errors.empty()?(item.available_cents?"VAR":"YOK"):"—",s(item.output_pdf),errors.join("; ")};
-            for(int c=0;c<values.size();++c){auto* cell=new QTableWidgetItem(values[c]);cell->setBackground(QColor(item.errors.empty()?"#D4EDDA":"#F8D7DA"));cell->setForeground(Qt::black);table_->setItem(r,c,cell);}
+            const auto color=!item.errors.empty()?"#F8D7DA":item.source.warnings.empty()?"#D4EDDA":"#FFF3CD";
+            for(int c=0;c<values.size();++c){auto* cell=new QTableWidgetItem(values[c]);cell->setBackground(QColor(color));cell->setForeground(Qt::black);table_->setItem(r,c,cell);}
             if(item.errors.empty()){++valid;if(item.available_cents)++var;}
         }
         status_->setText(QStringLiteral("%1 satır · %2 VAR · %3 YOK · %4 inceleme gerekli").arg(static_cast<int>(rows_.size())).arg(var).arg(valid-var).arg(static_cast<int>(rows_.size())-valid));
