@@ -12,13 +12,14 @@ class QPlainTextEdit;
 class QLineEdit;
 
 namespace muz {
+class ResponsePanel;
 class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(Workspace& workspace);
     ~MainWindow() override;
     void importFolder(const std::filesystem::path& folder);
     void importArchive(const std::filesystem::path& archive);
-    [[nodiscard]] bool busy() const { return watcher_.isRunning(); }
+    [[nodiscard]] bool busy() const;
     [[nodiscard]] int batchCount() const;
     [[nodiscard]] int documentCount() const;
 protected:
@@ -35,6 +36,7 @@ private:
     QTableWidget* accounting_{};
     QPlainTextEdit* source_;
     QLineEdit* date_;
+    ResponsePanel* returned_{};
     std::vector<QPushButton*> actions_;
     std::vector<AccountingRow> accounting_rows_;
     std::string selected_batch_;
@@ -44,7 +46,7 @@ private:
     void showAccounting();
     void paintAccountingRow(int index);
     void reviewSelected(bool approve);
-    void exportExcel(bool draft);
+    void exportExcel(bool draft, bool demo = false);
     void resetDatabaseForTesting();
     void setBusy(bool busy);
     bool hasUnsavedEdits() const;

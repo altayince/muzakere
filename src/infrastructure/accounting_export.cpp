@@ -8,6 +8,7 @@
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 #include <miniz.h>
+#include <QRandomGenerator>
 
 namespace muz {
 namespace {
@@ -30,7 +31,7 @@ QByteArray worksheet_view(const QByteArray& input, int last_row) {
         } else {
             writer.writeCurrentToken(reader);
             if (reader.isEndElement() && reader.name() == u"sheetData") {
-                writer.writeEmptyElement("autoFilter"); writer.writeAttribute("ref","A1:M" + QString::number(last_row));
+                writer.writeEmptyElement("autoFilter"); writer.writeAttribute("ref","A1:N" + QString::number(last_row));
             }
         }
     }
@@ -64,7 +65,7 @@ void publish_workbook(const QByteArray& workbook, const std::filesystem::path& p
 }
 }
 
-void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::filesystem::path& path, bool draft) {
+void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::filesystem::path& path, bool draft, bool demo) {
     QXlsx::Document workbook;
     workbook.renameSheet("Sheet1","İcra Dosyaları");
     if (!workbook.selectSheet("İcra Dosyaları")) check(workbook.addSheet("İcra Dosyaları"));
@@ -77,8 +78,8 @@ void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::fi
     identifier=body; identifier.setNumberFormat("@");
     money=body; money.setNumberFormat("#,##0.00");
     const QStringList headers={"Sıra No","Tebliğ Tarihi","İcra Dairesi","Esas Numarası","Borç Miktarı (TL)",
-        "Borçlu","Borçlu TCKN/VKN","Alacaklı","İcra Dairesi İBAN","89/1 Haciz İhbarnamesi mi?","Açıklama","Muhatap","Uyarılar"};
-    const std::array<double,13> widths={9,16,48,18,21,38,27,48,32,24,70,48,70};
+        "Borçlu","Borçlu TCKN/VKN","Alacaklı","İcra Dairesi İBAN","89/1 Haciz İhbarnamesi mi?","Açıklama","Muhatap","Uyarılar","Muhasebe"};
+    const std::array<double,14> widths={9,16,48,18,21,38,27,48,32,24,70,48,70,22};
     for (int column=1;column<=headers.size();++column) {
         check(workbook.currentWorksheet()->writeString(1,column,headers[column-1],header));
         workbook.setColumnWidth(column,widths[static_cast<std::size_t>(column-1)]);
@@ -109,17 +110,21 @@ void write_accounting_xlsx(const std::vector<AccountingRow>& rows, const std::fi
         check(workbook.currentWorksheet()->writeString(index,12,s(recipient_text(row)),body));
         QStringList warnings; for(const auto& warning:row.warnings)warnings.append(s(warning));
         check(workbook.currentWorksheet()->writeString(index,13,warnings.join("; "),body));
+        if(demo && index%2==0)check(workbook.write(index,14,QRandomGenerator::global()->bounded(1,1000000)/100.0,money));
+        else check(workbook.currentWorksheet()->writeString(index,14,QString{},money));
         workbook.setRowHeight(index,75); ++index;
     }
     body.setPatternBackgroundColor(Qt::white);
     identifier=body; identifier.setNumberFormat("@");
     check(workbook.addSheet("Kaynaklar"));
-    const QStringList sources={"Sıra No","Record ID","Batch ID","Belge ID","Zarf ID","Kaynak dosya","SHA-256","Eşleşme güveni","Onay durumu","Muhatap"};
+    const QStringList sources={"Sıra No","Record ID","Batch ID","Belge ID","Zarf ID","Kaynak dosya","SHA-256","Eşleşme güveni","Onay durumu","Muhatap","Satır verisi","Taslak","Test verisi","Biçim"};
     for (int c=0;c<sources.size();++c) check(workbook.currentWorksheet()->writeString(1,c+1,sources[c],header));
     index=2;
     for (const auto& row:rows) {
+        auto snapshot=row; snapshot.source_text.clear(); snapshot.evidence.clear();
         const QStringList values={QString::number(index-1),s(row.id),s(row.batch_id),s(row.document_id),s(row.envelope_id),
-            s(row.source_path),s(row.sha256),QString::number(row.match_confidence,'f',2),row.approved?"Onaylı":"Onay bekliyor",s(row.recipient)};
+            s(row.source_path),s(row.sha256),QString::number(row.match_confidence,'f',2),row.approved?"Onaylı":"Onay bekliyor",s(row.recipient),
+            encode_row(snapshot),draft?"1":"0",demo?"1":"0","MUZ-RETURN-1"};
         for (int c=0;c<values.size();++c) check(workbook.currentWorksheet()->writeString(index,c+1,values[c],identifier));
         ++index;
     }

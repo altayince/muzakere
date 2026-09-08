@@ -1,0 +1,5 @@
+<RCC><qresource prefix="/responses">
+<file alias="base.html">templates/base.html</file>
+<file alias="var.html">templates/var.html</file>
+<file alias="yok.html">templates/yok.html</file>
+</qresource></RCC>

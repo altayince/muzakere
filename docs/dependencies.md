@@ -22,4 +22,8 @@ Sources checked during setup: [Qt licensing](https://doc.qt.io/qt-6/licensing.ht
 [PDFium distribution and licensing](https://github.com/pypdfium2-team/pypdfium2),
 [miniz](https://github.com/richgel999/miniz).
 Distribution packaging must include the actual Qt and third-party notices and
-meet the chosen license terms; there is no redistributable installer in this slice.
+meet the chosen license terms. MUZ-11 adds Inno Setup 6.4.3 as a build-only tool;
+its pinned official installer and Qt Base source archive are SHA-256 verified.
+`package.ps1` bundles shared Qt/runtime libraries, PDFium, all collected notices
+and the matching Qt Base source archive. Application runtime does not use Python.
+See [Inno Setup 6.4.3 license](https://github.com/jrsoftware/issrc/blob/is-6_4_3/license.txt).

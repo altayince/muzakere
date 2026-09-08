@@ -4,9 +4,13 @@ Local, single-user KEP document workflow for a law office. C++20, Qt 6 Widgets,
 SQLite. Original documents stay intact; uncertain matches require human review.
 
 Implemented: import folders or ZIPs, preserve/hash documents, extract PDF text,
-review accounting rows and generate an Excel workbook. No network services at runtime.
+review accounting rows, export/import accounting workbooks and generate one VAR/YOK
+response PDF per debtor row. No network services at runtime.
 
 ## Windows
+
+For another user's PC, distribute `out/installer/setup.exe`; no developer tools or
+Office installation are needed. See the [installation and test guide](docs/testing-installer.md).
 
 Python 3.11+, Git and internet access are needed for initial tool setup. Tools are
 installed only under ignored `.tools/`; no machine-wide compiler install.
@@ -37,7 +41,8 @@ records your explicit review. **Onaylı Excel** exports approved rows; **İncele
 Excel’i** exports all rows as a visibly marked draft. Conflicting envelope/recipient
 rows cannot be approved; keep them in review. Existing output files are never overwritten.
 
-The first sheet keeps the sample's 11 columns and adds **Muhatap** and **Uyarılar**,
+The first sheet keeps the sample's 11 columns and adds **Muhatap**, **Uyarılar**
+and an empty rightmost **Muhasebe** column,
 with a frozen header and filter. Each debtor has a separate row with their own
 TCKN/VKN, shared document/case details and the document's full amount (not divided;
 amounts on sibling rows must not be added as independent debts). Multiple debtors
@@ -75,10 +80,28 @@ ctest --preset dev
 
 See [architecture](docs/architecture.md), [dependency decisions](docs/dependencies.md),
 [schema v1](migrations/001_initial.sql), and [workflow](WORKFLOW.md).
-Accounting return-sheet import and petition generation remain future increments.
+The second main tab imports the returned workbook: a number (including zero)
+means VAR; a blank cell means YOK. Invalid cells and changed debtor identities
+block PDF generation for that row. Preview the response, check lawyer/address,
+then generate selected valid rows. The original ZIP is not needed on the second PC.
+The separate **Test: muhasebe dönüşü oluştur** export simulates accounting using
+random amounts and blanks; its PDFs visibly identify test data.
+See [accounting return details](docs/accounting-return.md).
 Keep real client documents out of Git. See [ZIP-to-Excel details](docs/zip-to-excel.md).
 
 For debugging, **TEST — Veritabanını sıfırla** clears every database record after
 confirmation, including batches, approvals and audit history. The database schema
 is recreated atomically. Source files and generated Excel files remain on disk;
 you can import the same ZIP again. The button is disabled during processing.
+
+Build and verify the installer after the Windows toolchain setup:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup-installer-tools.ps1
+powershell -ExecutionPolicy Bypass -File scripts/package.ps1
+powershell -ExecutionPolicy Bypass -File scripts/smoke-package.ps1
+```
+
+`package.ps1 -ProfileFile <local.json>` optionally includes default `lawyer` and
+`address` strings; keep this file outside Git. CI builds a generic installer as
+the `muzakere-windows-setup` artifact after Windows tests and a deployed runtime test.

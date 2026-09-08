@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "response_panel.hpp"
 
 #include <QCloseEvent>
 #include <QFileDialog>
@@ -101,6 +102,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     auto* approve=button(QStringLiteral("Seçilenleri onayla"));
     auto* draft=button(QStringLiteral("İnceleme Excel’i"));
     auto* export_button=button(QStringLiteral("Onaylı Excel"));
+    auto* demo_button=button(QStringLiteral("Test: muhasebe dönüşü oluştur"));
     review_layout->addLayout(toolbar);
     auto* date_layout=new QHBoxLayout;
     date_=new QLineEdit(review); date_->setPlaceholderText(QStringLiteral("Tebliğ tarihini değiştir: gg.aa.yyyy"));
@@ -143,6 +145,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     });
     connect(draft,&QPushButton::clicked,this,[this]{exportExcel(true);});
     connect(export_button,&QPushButton::clicked,this,[this]{exportExcel(false);});
+    connect(demo_button,&QPushButton::clicked,this,[this]{exportExcel(true,true);});
     connect(prepare,&QPushButton::clicked,this,[this] {
         if (selected_batch_.empty() || busy()) return;
         if(hasUnsavedEdits()){status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin."));return;}
@@ -153,7 +156,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-9 — Borçlu başına satır ve renkli inceleme\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-11 — Muhasebe dönüşü ve PDF cevapları\n"
+        "İki ana sekme, boş Muhasebe sütunu, test dönüş Excel’i, VAR/YOK önizleme ve satır başına PDF.\n\n"
+        "MUZ-9 — Borçlu başına satır ve renkli inceleme\n"
         "Her borçlu kendi kimlik numarasıyla ayrı satırda. Muhatap ayrı sütunda; durumlar yeşil, sarı ve kırmızı.\n\n"
         "MUZ-7 — Test sıfırlama ve eski kayıtların tebliğ tarihi\n"
         "Test düğmesi veritabanını temizler. Eski boş tarihler bugünün tarihiyle doldurulur ve yeniden onay bekler.\n\n"
@@ -171,7 +176,11 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
     status_->setWordWrap(true);
     status_->setTextFormat(Qt::PlainText);
     layout->addWidget(status_);
-    setCentralWidget(central);
+    auto* main_tabs=new QTabWidget(this);main_tabs->setObjectName("workflowTabs");
+    main_tabs->addTab(central,QStringLiteral("Muhasebeye gönderme kısmı"));
+    returned_=new ResponsePanel(workspace_,[central](bool active){central->setEnabled(!active);},main_tabs);
+    main_tabs->addTab(returned_,QStringLiteral("Muhasebeden onay aldıktan sonra"));
+    setCentralWidget(main_tabs);
     connect(import_, &QPushButton::clicked, this, [this] {
         const auto folder = QFileDialog::getExistingDirectory(this, QStringLiteral("İndirilen KEP belgelerinin klasörünü seçin"));
         if (folder.isEmpty()) return;
@@ -199,6 +208,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
 }
 
 MainWindow::~MainWindow() { watcher_.waitForFinished(); }
+bool MainWindow::busy() const {return watcher_.isRunning() || (returned_ && returned_->busy());}
 
 void MainWindow::importFolder(const std::filesystem::path& folder) {
     if (watcher_.isRunning()) return;
@@ -253,6 +263,7 @@ void MainWindow::selectBatch() {
 }
 
 void MainWindow::setBusy(bool value) {
+    if(returned_)returned_->setEnabled(!value);
     import_->setEnabled(!value); batches_->setEnabled(!value); accounting_->setEnabled(!value);
     for (auto* button:actions_) button->setEnabled(!value);
     progress_->setVisible(value);
@@ -340,16 +351,17 @@ void MainWindow::reviewSelected(bool approve) {
     } catch(const Error&){status_->setText(QStringLiteral("Kayıt başarısız. Çelişkili zarf/muhatap satırlarını onaylamayın. Daire, esas, borçlu, Evet/Hayır, tarih (gg.aa.yyyy) ve tutarı (1234,56) kontrol edin."));}
 }
 
-void MainWindow::exportExcel(bool draft) {
+void MainWindow::exportExcel(bool draft,bool demo) {
     if (selected_batch_.empty()) return;
     for(int i=0;i<accounting_->rowCount();++i) if(accounting_->item(i,0)->text().contains(QStringLiteral("kaydedilmedi"))) {
         status_->setText(QStringLiteral("Önce düzenlediğiniz satırları kaydedin veya onaylayın."));return;
     }
     const auto output=QFileDialog::getSaveFileName(this,QStringLiteral("Excel çıktısı için yeni dosya adı seçin"),
-        draft?"Icra_Dosyalari_Inceleme.xlsx":"Icra_Dosyalari.xlsx","Excel (*.xlsx)");
+        demo?"TEST_Muhasebe_Donusu.xlsx":draft?"Icra_Dosyalari_Inceleme.xlsx":"Icra_Dosyalari.xlsx","Excel (*.xlsx)");
     if(output.isEmpty())return;
     try {
-        workspace_.export_accounting(selected_batch_,native(output),draft);
+        if(demo)workspace_.export_demo_accounting(selected_batch_,native(output));
+        else workspace_.export_accounting(selected_batch_,native(output),draft);
         status_->setText(QStringLiteral("Excel oluşturuldu: ")+output);
     } catch(const Error&){status_->setText(QStringLiteral("Excel oluşturulamadı. Yeni bir .xlsx dosya adı kullanın; onaylı çıktı için önce satırları onaylayın."));}
 }
@@ -366,6 +378,7 @@ void MainWindow::resetDatabaseForTesting() {
         workspace_.reset_database_for_testing();
         selected_batch_.clear(); accounting_rows_.clear(); showAccounting(); date_->clear();
         refresh();
+        returned_->reload();
         status_->setText(QStringLiteral("Test veritabanı sıfırlandı. ZIP'i yeniden içe aktarabilirsiniz."));
     } catch (const Error& error) { status_->setText(errorText(error.what())); }
     setBusy(false);
@@ -380,7 +393,7 @@ bool MainWindow::hasUnsavedEdits() const {
 int MainWindow::batchCount() const { return batches_->rowCount(); }
 int MainWindow::documentCount() const { return documents_->rowCount(); }
 void MainWindow::closeEvent(QCloseEvent* event) {
-    if (watcher_.isRunning()) {
+    if (busy()) {
         status_->setText(QStringLiteral("İçe aktarma sürüyor. Tamamlandığında pencereyi kapatabilirsiniz."));
         event->ignore();
     } else if(hasUnsavedEdits()) {

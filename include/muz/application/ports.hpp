@@ -2,6 +2,7 @@
 
 #include "muz/domain/model.hpp"
 #include "muz/domain/accounting.hpp"
+#include "muz/domain/response.hpp"
 
 namespace muz {
 class FileStore {
@@ -41,5 +42,14 @@ public:
     virtual std::vector<AccountingRow> accounting_rows(const std::string& batch_id) = 0;
     virtual void review_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows) = 0;
     virtual void export_accounting(const std::string& batch_id, const std::filesystem::path& output, bool draft) = 0;
+    virtual void export_demo_accounting(const std::string& batch_id, const std::filesystem::path& output) = 0;
+    virtual AccountingReturn import_accounting_return(const std::filesystem::path& input) = 0;
+    virtual std::vector<AccountingReturn> accounting_returns() = 0;
+    virtual std::vector<ResponseRow> response_rows(const std::string& return_id) = 0;
+    virtual ResponseProfile response_profile() = 0;
+    virtual void save_response_profile(const ResponseProfile& profile) = 0;
+    virtual std::string preview_response(const ResponseRow& row, const ResponseProfile& profile) = 0;
+    virtual std::filesystem::path generate_responses(const std::string& return_id,
+        const std::vector<std::string>& row_ids, const std::filesystem::path& output, const ResponseProfile& profile) = 0;
 };
 } // namespace muz
