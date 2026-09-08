@@ -5,7 +5,8 @@
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 #ifdef Q_OS_WIN
-    QFontDatabase::addApplicationFont(qEnvironmentVariable("WINDIR")+"/Fonts/arial.ttf");
+    for(const auto* font:{"times.ttf","timesbd.ttf","timesi.ttf","timesbi.ttf","arial.ttf"})
+        QFontDatabase::addApplicationFont(qEnvironmentVariable("WINDIR")+"/Fonts/"+font);
 #endif
     return Catch::Session().run(argc, argv);
 }

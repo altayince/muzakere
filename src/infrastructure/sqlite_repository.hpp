@@ -20,6 +20,13 @@ public:
     std::string record_export(const std::string& batch_id, const std::filesystem::path& path,
                        const std::string& sha256, std::size_t count, bool draft);
     void complete_export(const std::string& id, const std::string& batch_id, bool draft);
+    void save_return(const AccountingReturn& data);
+    std::vector<AccountingReturn> accounting_returns();
+    std::vector<ResponseRow> response_rows(const std::string& return_id);
+    ResponseProfile response_profile();
+    void save_response_profile(const ResponseProfile& profile);
+    void prepare_response_exports(const std::string& return_id, const std::vector<ResponseExport>& exports);
+    void complete_response_exports(const std::string& return_id, const std::vector<ResponseExport>& exports);
 private:
     QSqlDatabase db_;
     void migrate();

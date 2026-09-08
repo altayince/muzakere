@@ -2,6 +2,7 @@
 #include "qt_paths.hpp"
 #include "schema.hpp"
 #include "accounting_adapters.hpp"
+#include "response_adapters.hpp"
 
 #include <QSqlQuery>
 #include <QUuid>
@@ -75,7 +76,7 @@ void SqliteRepository::migrate() {
     if (!version.next()) throw Error(ErrorCode::storage);
     const auto current = version.value(0).toInt();
     version.finish();
-    if (current > 3 || current < 0) throw Error(ErrorCode::schema_version);
+    if (current > 4 || current < 0) throw Error(ErrorCode::schema_version);
     if (current == 0) {
         const auto statements = QString::fromUtf8(schema_v1).split("-- statement", Qt::SkipEmptyParts);
         for (const auto& statement : statements) query(db_, statement);
@@ -94,6 +95,10 @@ void SqliteRepository::migrate() {
         for (const auto& statement : QString::fromUtf8(schema_v3).split("-- statement", Qt::SkipEmptyParts))
             query(db_, statement);
     }
+    if (current < 4) {
+        for (const auto& statement : QString::fromUtf8(schema_v4).split("-- statement", Qt::SkipEmptyParts))
+            query(db_, statement);
+    }
     tx.commit();
 }
 
@@ -101,11 +106,12 @@ void SqliteRepository::reset_for_testing() {
     // Reset only this workspace's database, atomically. DROP also removes the
     // append-only audit triggers; the schema scripts recreate them before commit.
     Transaction tx(db_);
-    for (const auto* table : {"accounting_exports", "accounting_rows", "batch_archives",
+    for (const auto* table : {"response_exports", "response_rows", "response_events", "response_profile", "accounting_returns",
+            "accounting_exports", "accounting_rows", "batch_archives",
             "audit_events", "review_issues", "incoming_documents", "case_records",
             "stored_files", "processing_batches", "schema_migrations"})
         query(db_, "DROP TABLE " + QString::fromLatin1(table));
-    for (const auto* schema : {schema_v1, schema_v2, schema_v3})
+    for (const auto* schema : {schema_v1, schema_v2, schema_v3, schema_v4})
         for (const auto& statement : QString::fromUtf8(schema).split("-- statement", Qt::SkipEmptyParts))
             query(db_, statement);
     tx.commit();
@@ -240,6 +246,60 @@ void SqliteRepository::complete_export(const std::string& id, const std::string&
     if(result.numRowsAffected()!=1) throw Error(ErrorCode::storage);
     audit(db_,QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString(),
           draft ? "accounting_draft_exported":"accounting_exported",id,batch_id);
+    tx.commit();
+}
+void SqliteRepository::save_return(const AccountingReturn& data) {
+    Transaction tx(db_);
+    query(db_,"INSERT INTO accounting_returns VALUES(?,?,?,?,?)",{s(data.id),s(data.source_name),s(data.created_at),s(data.sha256),s(data.managed_path)});
+    int index=0;
+    for(const auto& row:data.rows) {
+        if(row.return_id!=data.id)throw Error(ErrorCode::invalid_input);
+        query(db_,"INSERT INTO response_rows VALUES(?,?,?,?)",{s(row.id),s(data.id),index++,encode_response(row)});
+    }
+    query(db_,"INSERT INTO response_events(return_id,occurred_at,event_type,entity_id) VALUES(?,?,'return_imported',?)",
+        {s(data.id),s(data.created_at),s(data.id)});
+    tx.commit();
+}
+std::vector<AccountingReturn> SqliteRepository::accounting_returns() {
+    auto data=query(db_,"SELECT id,source_name,created_at,sha256,managed_path FROM accounting_returns ORDER BY created_at DESC,id");
+    std::vector<AccountingReturn> result;
+    while(data.next())result.push_back({data.value(0).toString().toStdString(),data.value(1).toString().toStdString(),
+        data.value(2).toString().toStdString(),data.value(3).toString().toStdString(),data.value(4).toString().toStdString(),{}});
+    return result;
+}
+std::vector<ResponseRow> SqliteRepository::response_rows(const std::string& return_id) {
+    auto data=query(db_,"SELECT r.payload,(SELECT output_path FROM response_exports e WHERE e.row_id=r.id AND e.status='published' ORDER BY created_at DESC,id DESC LIMIT 1) FROM response_rows r WHERE return_id=? ORDER BY position",{s(return_id)});
+    std::vector<ResponseRow> result;
+    while(data.next()){auto row=decode_response(data.value(0).toString());row.output_pdf=data.value(1).toString().toStdString();result.push_back(std::move(row));}
+    return result;
+}
+ResponseProfile SqliteRepository::response_profile() {
+    auto data=query(db_,"SELECT lawyer,address FROM response_profile WHERE id=1");
+    if(!data.next())return {};
+    return {data.value(0).toString().toStdString(),data.value(1).toString().toStdString()};
+}
+void SqliteRepository::save_response_profile(const ResponseProfile& profile) {
+    query(db_,"INSERT INTO response_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET lawyer=excluded.lawyer,address=excluded.address",
+        {s(profile.lawyer),s(profile.address)});
+}
+void SqliteRepository::prepare_response_exports(const std::string& return_id,const std::vector<ResponseExport>& exports) {
+    Transaction tx(db_);const auto now=QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    for(const auto& item:exports) {
+        auto source=query(db_,"SELECT 1 FROM response_rows WHERE id=? AND return_id=?",{s(item.row_id),s(return_id)});
+        if(!source.next())throw Error(ErrorCode::invalid_input);
+        source.finish();
+        query(db_,"INSERT INTO response_exports VALUES(?,?,?,?,?,?,'prepared')",{s(item.id),s(item.row_id),now,s(item.path),s(item.sha256),s(item.template_sha256)});
+        query(db_,"INSERT INTO response_events(return_id,occurred_at,event_type,entity_id) VALUES(?,?,'pdf_prepared',?)",{s(return_id),now,s(item.id)});
+    }
+    tx.commit();
+}
+void SqliteRepository::complete_response_exports(const std::string& return_id,const std::vector<ResponseExport>& exports) {
+    Transaction tx(db_);const auto now=QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    for(const auto& item:exports) {
+        auto updated=query(db_,"UPDATE response_exports SET status='published' WHERE id=? AND status='prepared'",{s(item.id)});
+        if(updated.numRowsAffected()!=1)throw Error(ErrorCode::storage);
+        query(db_,"INSERT INTO response_events(return_id,occurred_at,event_type,entity_id) VALUES(?,?,'pdf_published',?)",{s(return_id),now,s(item.id)});
+    }
     tx.commit();
 }
 } // namespace muz

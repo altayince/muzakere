@@ -374,7 +374,7 @@ TEST_CASE("Test reset clears database and UI and permits reimport without deleti
         }
         REQUIRE(query.exec("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'audit_no_%'"));
         REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==2);
-        REQUIRE(query.exec("PRAGMA user_version")); REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==3);
+        REQUIRE(query.exec("PRAGMA user_version")); REQUIRE(query.next()); REQUIRE(query.value(0).toInt()==4);
     }
     QSqlDatabase::removeDatabase("reset-check");
     const auto fresh=workspace.import_archive(muz::native_path(archive));
@@ -402,7 +402,9 @@ TEST_CASE("Schema v2 combined debtors migrate to independent review and Excel ro
         REQUIRE(query.prepare("INSERT INTO accounting_rows VALUES(?,?,?,1)"));
         query.addBindValue(QString::fromStdString(old.id));query.addBindValue(QString::fromStdString(batch));
         query.addBindValue(muz::encode_row(old)); REQUIRE(query.exec());
-        REQUIRE(query.exec("DELETE FROM schema_migrations WHERE version=3")); REQUIRE(query.exec("PRAGMA user_version=2"));
+        for(const auto* table:{"response_exports","response_rows","response_events","response_profile","accounting_returns"})
+            REQUIRE(query.exec("DROP TABLE "+QString::fromLatin1(table)));
+        REQUIRE(query.exec("DELETE FROM schema_migrations WHERE version>=3")); REQUIRE(query.exec("PRAGMA user_version=2"));
     }
     QSqlDatabase::removeDatabase("v2-debtors");
     auto rows=workspace.accounting_rows(batch); REQUIRE(rows.size()==2);
@@ -441,7 +443,7 @@ TEST_CASE("Desktop uses dedicated recipient cells and updates blocking colors on
     auto* table=window.findChild<QTableWidget*>("accountingTable"); REQUIRE(table!=nullptr);
     REQUIRE(table->item(0,0)->background().color()==QColor("#D4EDDA"));
     REQUIRE(table->item(0,11)->text()=="ÖRNEK ŞİRKET"); REQUIRE(table->item(0,12)->text().isEmpty());
-    table->item(0,1)->setText("08.09.2026");
+    table->item(0,1)->setText(QDate::fromString(table->item(0,1)->text(),"dd.MM.yyyy").addDays(1).toString("dd.MM.yyyy"));
     REQUIRE(table->item(0,0)->background().color()==QColor("#FFF3CD"));
     table->item(0,6)->setText("11111111111; 22222222222");
     REQUIRE(table->item(0,0)->background().color()==QColor("#F8D7DA"));

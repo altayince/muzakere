@@ -39,7 +39,8 @@ one-off Python-generated workbook or external API is part of the runtime.
 The first 11 output columns match the supplied example: Sıra No, Tebliğ Tarihi,
 İcra Dairesi, Esas Numarası, Borç Miktarı (TL), Borçlu, Borçlu TCKN/VKN,
 Alacaklı, İcra Dairesi İBAN, 89/1 Haciz İhbarnamesi mi?, Açıklama.
-The new columns L/M are Muhatap and Uyarılar. Recipients are not included in
+Columns L/M are Muhatap and Uyarılar; N is the empty Muhasebe return column.
+Recipients are not included in
 warnings or Açıklama; conflicting envelope recipients appear in Muhatap too.
 Additional source/evidence worksheets
 retain UUIDs, PDF hashes and matching confidence. Confidence is a rule weight,
@@ -58,7 +59,8 @@ PDF 64 MiB, 200 pages, 200,000 characters/page and 2,000,000/document. Current
 parsers cover labelled notice/general-letter layouts; arbitrary scans and new
 layouts require review or a new extractor. Turkish TCKN/VKN values are extracted
 as written, not verified against an identity registry. Manual reassignment of
-contradictory pairs and accounting return-sheet import are future work.
+contradictory pairs remains future work. Accounting return-sheet import and
+response PDFs are implemented in [MUZ-11](accounting-return.md).
 
 ## Verification
 

@@ -4,6 +4,7 @@
 #include "qt_paths.hpp"
 #include "sqlite_repository.hpp"
 #include "accounting_adapters.hpp"
+#include "response_adapters.hpp"
 
 #include <QDateTime>
 #include <QDir>
@@ -18,6 +19,10 @@
 #include <QDate>
 #include <algorithm>
 #include <set>
+#include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 namespace muz {
 namespace {
@@ -199,6 +204,12 @@ void LocalWorkspace::review_accounting(const std::string& batch_id, const std::v
 }
 
 void LocalWorkspace::export_accounting(const std::string& batch_id, const std::filesystem::path& output, bool draft) {
+    export_accounting_impl(batch_id,output,draft,false);
+}
+void LocalWorkspace::export_demo_accounting(const std::string& batch_id,const std::filesystem::path& output) {
+    export_accounting_impl(batch_id,output,true,true);
+}
+void LocalWorkspace::export_accounting_impl(const std::string& batch_id,const std::filesystem::path& output,bool draft,bool demo) {
     std::lock_guard guard(impl_->writer);
     SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
     auto rows = load_accounting(repository,batch_id);
@@ -234,7 +245,7 @@ void LocalWorkspace::export_accounting(const std::string& batch_id, const std::f
     QTemporaryFile temporary(parent + "/.muz-export-XXXXXX");
     if (!temporary.open()) throw Error(ErrorCode::file_io);
     const auto temporary_path = temporary.fileName(); temporary.close();
-    write_accounting_xlsx(rows,native_path(temporary_path),draft);
+    write_accounting_xlsx(rows,native_path(temporary_path),draft,demo);
     QFile content(temporary_path);
     QCryptographicHash hash(QCryptographicHash::Sha256);
     if (!content.open(QIODevice::ReadOnly) || !hash.addData(&content)) throw Error(ErrorCode::file_io);
@@ -244,5 +255,93 @@ void LocalWorkspace::export_accounting(const std::string& batch_id, const std::f
     if (!temporary.rename(target.absoluteFilePath())) throw Error(ErrorCode::file_io);
     temporary.setAutoRemove(false);
     repository.complete_export(export_id,batch_id,draft);
+}
+AccountingReturn LocalWorkspace::import_accounting_return(const std::filesystem::path& input) {
+    std::lock_guard guard(impl_->writer);
+    if(!QFileInfo(qpath(input)).fileName().endsWith(".xlsx",Qt::CaseInsensitive) || QFileInfo(qpath(input)).size()>16*1024*1024)
+        throw Error(ErrorCode::invalid_input);
+    LocalFiles files(impl_->root); const auto stored=files.preserve(input);
+    QFile file(qpath(impl_->root)+'/'+QString::fromStdString(stored.managed_path));
+    if(!file.open(QIODevice::ReadOnly))throw Error(ErrorCode::file_io);
+    const auto bytes=file.readAll();
+    if(QCryptographicHash::hash(bytes,QCryptographicHash::Sha256).toHex().toStdString()!=stored.sha256)throw Error(ErrorCode::integrity);
+    auto result=read_accounting_return(bytes);
+    result.source_name=QFileInfo(qpath(input)).fileName().toStdString();result.sha256=stored.sha256;result.managed_path=stored.managed_path;
+    SqliteRepository repository(impl_->root/"database"/"muzakere.sqlite3");repository.save_return(result);return result;
+}
+std::vector<AccountingReturn> LocalWorkspace::accounting_returns() {
+    SqliteRepository repository(impl_->root/"database"/"muzakere.sqlite3");return repository.accounting_returns();
+}
+std::vector<ResponseRow> LocalWorkspace::response_rows(const std::string& return_id) {
+    SqliteRepository repository(impl_->root/"database"/"muzakere.sqlite3");return repository.response_rows(return_id);
+}
+ResponseProfile LocalWorkspace::response_profile() {
+    SqliteRepository repository(impl_->root/"database"/"muzakere.sqlite3");auto profile=repository.response_profile();
+    if(!profile.lawyer.empty())return profile;
+    QFile defaults(QCoreApplication::applicationDirPath()+"/response-profile.json");
+    if(defaults.open(QIODevice::ReadOnly) && defaults.size()<16000) {
+        const auto object=QJsonDocument::fromJson(defaults.readAll()).object();
+        profile={object["lawyer"].toString().toStdString(),object["address"].toString().toStdString()};
+    }
+    return profile;
+}
+void LocalWorkspace::save_response_profile(const ResponseProfile& profile) {
+    if(profile.lawyer.size()>1000 || profile.address.size()>4000)throw Error(ErrorCode::invalid_input);
+    std::lock_guard guard(impl_->writer);SqliteRepository repository(impl_->root/"database"/"muzakere.sqlite3");repository.save_response_profile(profile);
+}
+std::string LocalWorkspace::preview_response(const ResponseRow& row,const ResponseProfile& profile) {
+    if(!row.errors.empty())throw Error(ErrorCode::invalid_input);
+    return response_html(row,profile).toStdString();
+}
+std::filesystem::path LocalWorkspace::generate_responses(const std::string& return_id,const std::vector<std::string>& row_ids,
+        const std::filesystem::path& output,const ResponseProfile& profile) {
+    std::lock_guard guard(impl_->writer);
+    if(row_ids.empty() || QString::fromStdString(profile.lawyer).trimmed().isEmpty() ||
+       QString::fromStdString(profile.address).trimmed().isEmpty() || profile.lawyer.size()>1000 || profile.address.size()>4000)
+        throw Error(ErrorCode::invalid_input);
+    SqliteRepository repository(impl_->root/"database"/"muzakere.sqlite3");
+    const auto returns=repository.accounting_returns();
+    const auto data=std::find_if(returns.begin(),returns.end(),[&](const auto& item){return item.id==return_id;});
+    if(data==returns.end())throw Error(ErrorCode::invalid_input);
+    QFile original(qpath(impl_->root)+'/'+QString::fromStdString(data->managed_path));
+    if(!original.open(QIODevice::ReadOnly) || original.size()>16*1024*1024 ||
+        QCryptographicHash::hash(original.readAll(),QCryptographicHash::Sha256).toHex().toStdString()!=data->sha256)
+        throw Error(ErrorCode::integrity);
+    const auto rows=repository.response_rows(return_id);std::set<std::string> selected;
+    for(const auto& id:row_ids) {
+        const auto found=std::find_if(rows.begin(),rows.end(),[&](const auto& row){return row.id==id;});
+        if(!selected.insert(id).second || found==rows.end() || !found->errors.empty())throw Error(ErrorCode::invalid_input);
+    }
+    if(output.empty() || !QDir().mkpath(qpath(output)))throw Error(ErrorCode::file_io);
+    const auto parent=QFileInfo(qpath(output)).canonicalFilePath();
+    for(const auto* name:{"originals","database","staging"}) {
+        const auto forbidden=qpath(impl_->root)+'/'+name;
+        if(parent.compare(forbidden,Qt::CaseInsensitive)==0 || parent.startsWith(forbidden+'/',Qt::CaseInsensitive))throw Error(ErrorCode::invalid_input);
+    }
+    const auto run=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto final=parent+"/Cevaplar-"+QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss")+'-'+run.left(8);
+    if(QFileInfo::exists(final))throw Error(ErrorCode::file_io);
+    QTemporaryDir temporary(parent+"/.muz-pdf-XXXXXX");if(!temporary.isValid())throw Error(ErrorCode::file_io);
+    std::vector<ResponseExport> exports;QJsonArray manifest;
+    for(const auto& row:rows) {
+        if(!selected.contains(row.id))continue;
+        const auto name=QString::fromStdString(normalize_filename(row.source.cells[case_number]+"_"+row.source.cells[debtor])).left(80)+
+            '_'+QString::fromStdString(row.id).left(8)+(row.available_cents?"_VAR.pdf":"_YOK.pdf");
+        const auto html=response_html(row,profile);
+        write_response_pdf(html,native_path(temporary.path()+'/'+name));
+        QFile generated(temporary.path()+'/'+name);if(!generated.open(QIODevice::ReadOnly))throw Error(ErrorCode::file_io);
+        const auto hash=QCryptographicHash::hash(generated.readAll(),QCryptographicHash::Sha256).toHex().toStdString();
+        exports.push_back({QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString(),row.id,(final+'/'+name).toStdString(),hash,
+            QCryptographicHash::hash(html.toUtf8(),QCryptographicHash::Sha256).toHex().toStdString()});
+        manifest.append(QJsonObject{{"record_id",QString::fromStdString(row.source.id)},{"pdf",name},
+            {"decision",row.available_cents?"VAR":"YOK"},{"test",row.demo},{"sha256",QString::fromStdString(hash)}});
+    }
+    QFile summary(temporary.path()+"/manifest.json");
+    const auto bytes=QJsonDocument(manifest).toJson();
+    if(!summary.open(QIODevice::WriteOnly|QIODevice::NewOnly) || summary.write(bytes)!=bytes.size() || !summary.flush())throw Error(ErrorCode::file_io);
+    summary.close();repository.save_response_profile(profile);repository.prepare_response_exports(return_id,exports);
+    if(!QDir().rename(temporary.path(),final))throw Error(ErrorCode::file_io);
+    temporary.setAutoRemove(false);repository.complete_response_exports(return_id,exports);
+    return native_path(final);
 }
 } // namespace muz

@@ -2,7 +2,8 @@
 
 MUZ-3 adds native ZIP/PDF import, persisted field/matching review and accounting
 Excel export on top of the initial slice below. See [ZIP-to-Excel](zip-to-excel.md)
-for current behavior, schema v3, validation limits and the remaining increments.
+for import behavior and [accounting returns](accounting-return.md) for schema v4,
+the second workflow tab and response generation.
 
 The first increment is the complete **folder -> preserved bytes -> SQLite ->
 batch screen** slice. Imported does not mean legally approved. No case links are
@@ -80,10 +81,11 @@ work. Do not treat this first increment as production acceptance of those areas.
 3. Implemented in MUZ-3: matching proposals plus evidence and score;
    conflicting signals always require review. Manual pair reassignment remains future work.
 4. Review extracted fields and create/update approved cases with stable UUIDs.
-5. Implemented: deterministic XLSX row export. Future: import keyed by record ID with duplicate/missing/new/
-   invalid/unknown-row reports. Fallback suggestions never silently approve rows.
-6. Versioned templates, VAR/YOK selection and required-field validation; generate
-   petitions only for approved data, record template version and output hash.
+5. Implemented: XLSX export and return import keyed by stable row IDs, with
+   duplicate/missing/new/changed identity validation. Rows can be reordered.
+6. Implemented in MUZ-11: bundled VAR/YOK templates, profile fields, HTML preview
+   and native Qt PDF generation for approved rows (or explicitly marked test data).
+   Each output and rendered template has a recorded SHA-256 and publication state.
 
 Backend, web, KEP transmission, e-signature, browser automation, cloud, LLMs and
 OCR services remain outside MVP. No network calls exist in application code.

@@ -20,7 +20,7 @@ std::vector<AccountingRow> match_accounting(std::vector<ParsedDocument> document
 std::vector<AccountingRow> split_legacy_debtors(const AccountingRow& row);
 void extract_zip(const QByteArray& bytes, const std::filesystem::path& destination);
 void write_accounting_xlsx(const std::vector<AccountingRow>& rows,
-                           const std::filesystem::path& path, bool draft);
+                           const std::filesystem::path& path, bool draft, bool demo = false);
 QString encode_row(const AccountingRow& row);
 AccountingRow decode_row(const QString& payload);
 } // namespace muz
