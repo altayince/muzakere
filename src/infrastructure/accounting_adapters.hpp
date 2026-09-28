@@ -22,5 +22,6 @@ void extract_zip(const QByteArray& bytes, const std::filesystem::path& destinati
 void write_accounting_xlsx(const std::vector<AccountingRow>& rows,
                            const std::filesystem::path& path, bool draft, bool demo = false);
 QString encode_row(const AccountingRow& row);
+void write_hamdata_xlsx(const std::vector<AccountingRow>& rows, const std::filesystem::path& path, bool with_accounting);
 AccountingRow decode_row(const QString& payload);
 } // namespace muz

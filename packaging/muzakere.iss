@@ -7,7 +7,7 @@
 [Setup]
 AppId={{4A40F483-041B-44B8-8BC8-8EC7A2F3D7E2}
 AppName=Müzakere
-AppVersion=0.4.0
+AppVersion=0.5.0
 AppPublisher=Müzakere
 DefaultDirName={localappdata}\Programs\Muzakere
 DefaultGroupName=Müzakere

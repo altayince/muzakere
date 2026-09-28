@@ -209,7 +209,10 @@ void LocalWorkspace::export_accounting(const std::string& batch_id, const std::f
 void LocalWorkspace::export_demo_accounting(const std::string& batch_id,const std::filesystem::path& output) {
     export_accounting_impl(batch_id,output,true,true);
 }
-void LocalWorkspace::export_accounting_impl(const std::string& batch_id,const std::filesystem::path& output,bool draft,bool demo) {
+void LocalWorkspace::export_hamdata(const std::string& batch_id,const std::filesystem::path& output,bool with_accounting) {
+    export_accounting_impl(batch_id,output,true,false,with_accounting?2:1);
+}
+void LocalWorkspace::export_accounting_impl(const std::string& batch_id,const std::filesystem::path& output,bool draft,bool demo,int hamdata_mode) {
     std::lock_guard guard(impl_->writer);
     SqliteRepository repository(impl_->root / "database" / "muzakere.sqlite3");
     auto rows = load_accounting(repository,batch_id);
@@ -245,7 +248,8 @@ void LocalWorkspace::export_accounting_impl(const std::string& batch_id,const st
     QTemporaryFile temporary(parent + "/.muz-export-XXXXXX");
     if (!temporary.open()) throw Error(ErrorCode::file_io);
     const auto temporary_path = temporary.fileName(); temporary.close();
-    write_accounting_xlsx(rows,native_path(temporary_path),draft,demo);
+    if(hamdata_mode)write_hamdata_xlsx(rows,native_path(temporary_path),hamdata_mode==2);
+    else write_accounting_xlsx(rows,native_path(temporary_path),draft,demo);
     QFile content(temporary_path);
     QCryptographicHash hash(QCryptographicHash::Sha256);
     if (!content.open(QIODevice::ReadOnly) || !hash.addData(&content)) throw Error(ErrorCode::file_io);

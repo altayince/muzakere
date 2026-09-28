@@ -22,6 +22,7 @@ public:
     void review_accounting(const std::string& batch_id, const std::vector<AccountingRow>& rows) override;
     void export_accounting(const std::string& batch_id, const std::filesystem::path& output, bool draft) override;
     void export_demo_accounting(const std::string& batch_id, const std::filesystem::path& output) override;
+    void export_hamdata(const std::string& batch_id, const std::filesystem::path& output, bool with_accounting) override;
     AccountingReturn import_accounting_return(const std::filesystem::path& input) override;
     std::vector<AccountingReturn> accounting_returns() override;
     std::vector<ResponseRow> response_rows(const std::string& return_id) override;
@@ -31,7 +32,7 @@ public:
     std::filesystem::path generate_responses(const std::string& return_id, const std::vector<std::string>& row_ids,
         const std::filesystem::path& output, const ResponseProfile& profile) override;
 private:
-    void export_accounting_impl(const std::string& batch_id, const std::filesystem::path& output, bool draft, bool demo);
+    void export_accounting_impl(const std::string& batch_id, const std::filesystem::path& output, bool draft, bool demo, int hamdata_mode = 0);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
