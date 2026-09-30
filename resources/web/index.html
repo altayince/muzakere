@@ -10,18 +10,22 @@
   <header class="topbar">
     <div>
       <p class="eyebrow">Muzakere Web</p>
-      <h1>ZIP inceleme</h1>
+      <h1>Evraktan cevaba tek akış</h1>
     </div>
     <nav aria-label="Ana akış">
-      <a class="active" href="/">Imports</a>
-      <a aria-disabled="true">Review</a>
-      <a aria-disabled="true">Accounting</a>
-      <a aria-disabled="true">Responses</a>
+      <a class="active" href="#stage-import">1. Evrak</a>
+      <a href="#stage-accounting">2. Muhasebe</a>
+      <a href="#stage-responses">3. Cevap</a>
     </nav>
   </header>
 
   <main>
-    <section class="upload-panel">
+    <section id="stage-import" class="stage upload-panel" aria-labelledby="stageImportTitle">
+      <div class="stage-heading">
+        <p class="step-label">1. Evrakları yükle ve incele</p>
+        <h2 id="stageImportTitle">ZIP → inceleme satırları</h2>
+        <p>ZIP dosyasını yükle, çıkarılan satırları düzelt, kaydet ve gerekirse onayla. Excel oluşturma kaydedilmemiş değişiklik varken kapalı kalır.</p>
+      </div>
       <form id="uploadForm">
         <label for="zipFile">ZIP dosyası</label>
         <div class="upload-row">
@@ -40,10 +44,10 @@
         <span id="downloadLabel"></span>
         <a id="downloadWorkbook" href="#" download>Excel'i indir</a>
       </div>
-      <p id="message" role="status"></p>
+      <p id="message" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="summary" aria-live="polite">
+    <section class="summary" aria-live="polite" aria-label="İnceleme özeti">
       <div><strong id="total">0</strong><span>Toplam</span></div>
       <div><strong id="ready">0</strong><span>Sorunsuz</span></div>
       <div><strong id="review">0</strong><span>İnceleme</span></div>
@@ -51,7 +55,7 @@
       <div><strong id="approved">0</strong><span>Onaylı</span></div>
     </section>
 
-    <section class="table-wrap">
+    <section class="table-wrap" aria-label="İnceleme satırları">
       <table>
         <thead>
           <tr>
@@ -78,12 +82,17 @@
     </section>
 
 
-    <section class="upload-panel return-panel">
+    <section id="stage-accounting" class="stage upload-panel return-panel" aria-labelledby="stageAccountingTitle">
+      <div class="stage-heading">
+        <p class="step-label">2. Muhasebe dosyasını oluştur / dönüşü yükle</p>
+        <h2 id="stageAccountingTitle">HAMDATA + MUHASEBE → dönüş dosyası</h2>
+        <p>İlk bölümde oluşturduğun MUHASEBE dosyası geri geldiğinde burada yükle. VAR/YOK durumu ve blokajlar C++ çekirdek tarafından hesaplanır.</p>
+      </div>
       <form id="returnForm">
-        <label for="returnFile">Muhasebe donusu XLSX</label>
+        <label for="returnFile">Muhasebe dönüşü XLSX</label>
         <div class="upload-row">
           <input id="returnFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
-          <button type="submit">Donusu yukle ve eslestir</button>
+          <button type="submit">Dönüşü yükle ve eşleştir</button>
         </div>
       </form>
       <div class="profile-grid">
@@ -93,47 +102,70 @@
         <textarea id="responseAddress" rows="2" placeholder="Vekil adresi"></textarea>
       </div>
       <div class="review-actions">
-        <button id="reloadReturn" type="button" disabled>Donusu yenile</button>
-        <button id="selectValidResponses" type="button" disabled>Uygun satirlari sec</button>
+        <button id="reloadReturn" type="button" disabled>Dönüşü yenile</button>
+        <button id="selectValidResponses" type="button" disabled>Uygun satırları seç</button>
+        <button id="previewSelectedResponse" type="button" disabled>Seçili satırı önizle</button>
         <button id="saveResponseProfile" type="button">Profili kaydet</button>
-        <button id="generateResponses" type="button" disabled>Secili PDFleri olustur</button>
       </div>
-      <div id="responseDownloadPanel" class="download-panel" hidden>
-        <span id="responseDownloadLabel"></span>
-        <div id="responseDownloads" class="download-list"></div>
-      </div>
-      <p id="returnMessage" role="status"></p>
+      <p id="returnMessage" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="summary return-summary" aria-live="polite">
+    <section class="summary return-summary" aria-live="polite" aria-label="Muhasebe dönüşü özeti">
       <div><strong id="returnTotal">0</strong><span>Toplam</span></div>
       <div><strong id="returnVar">0</strong><span>VAR</span></div>
       <div><strong id="returnYok">0</strong><span>YOK</span></div>
-      <div><strong id="returnReview">0</strong><span>Uyari</span></div>
+      <div><strong id="returnReview">0</strong><span>Uyarı</span></div>
       <div><strong id="returnBlocked">0</strong><span>Blokaj</span></div>
     </section>
 
-    <section class="table-wrap return-table">
+    <section class="table-wrap return-table" aria-label="Muhasebe dönüş satırları">
       <table>
         <thead>
           <tr>
-            <th>Sec</th>
+            <th>Seç</th>
+            <th>Önizle</th>
             <th>Durum</th>
             <th>VAR/YOK</th>
-            <th>Donen deger</th>
-            <th>Borclu</th>
+            <th>Dönen değer</th>
+            <th>Borçlu</th>
             <th>TCKN/VKN</th>
             <th>Dosya</th>
-            <th>Icra dairesi</th>
-            <th>Alacakli</th>
+            <th>İcra dairesi</th>
+            <th>Alacaklı</th>
             <th>Muhatap</th>
-            <th>Uyari / Blokaj</th>
+            <th>Uyarı / Blokaj</th>
           </tr>
         </thead>
         <tbody id="returnRows">
-          <tr class="empty"><td colspan="11">Henuz muhasebe donusu yuklenmedi.</td></tr>
+          <tr class="empty"><td colspan="12">Henüz muhasebe dönüşü yüklenmedi.</td></tr>
         </tbody>
       </table>
+    </section>
+
+    <section id="stage-responses" class="stage response-workbench" aria-labelledby="stageResponsesTitle">
+      <div class="stage-heading">
+        <p class="step-label">3. VAR/YOK cevaplarını oluştur</p>
+        <h2 id="stageResponsesTitle">Önizle → PDF üret → indir</h2>
+        <p>Uygun satırları seç, gerekirse tek satır önizle, ardından seçili VAR/YOK cevap PDF'lerini oluştur.</p>
+      </div>
+      <div class="review-actions">
+        <button id="generateResponses" type="button" disabled>Seçili cevap PDF'lerini oluştur</button>
+        <button id="clearResponsePreview" type="button" disabled>Önizlemeyi kapat</button>
+      </div>
+      <div id="responsePreviewPanel" class="preview-panel" hidden>
+        <div class="preview-header">
+          <div>
+            <p class="eyebrow">Cevap önizleme</p>
+            <h3 id="responsePreviewTitle">Seçili satır</h3>
+          </div>
+        </div>
+        <p id="responsePreviewStatus" role="status" aria-live="polite"></p>
+        <iframe id="responsePreviewFrame" title="Cevap HTML önizlemesi" sandbox=""></iframe>
+      </div>
+      <div id="responseDownloadPanel" class="download-panel generated-panel" hidden>
+        <strong id="responseDownloadLabel"></strong>
+        <div id="responseDownloads" class="download-list" aria-label="Oluşturulan PDF indirmeleri"></div>
+      </div>
     </section>
   </main>
 

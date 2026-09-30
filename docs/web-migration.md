@@ -1,24 +1,25 @@
 # Web migration
 
-MUZ-15 starts the browser-first migration without replacing the existing desktop
-application or duplicating business rules in JavaScript.
+The browser migration keeps the desktop application available and does not
+duplicate business rules in JavaScript.
 
-The first vertical slice is:
+The current local browser workflow is:
 
 ```text
-browser
--> POST /api/imports with a ZIP file
--> muzakere_server
--> LocalWorkspace::import_archive
--> LocalWorkspace::prepare_accounting
--> review rows as JSON
--> browser table with green/yellow/red status
+ZIP upload
+-> review/edit/save
+-> HAMDATA or HAMDATA + MUHASEBE export
+-> accounting return upload
+-> VAR/YOK review
+-> response preview
+-> selected response PDF generation/download
 ```
 
 The HTTP layer is intentionally thin. Upload validation, ZIP safety checks, PDF
-text extraction, debtor parsing, review warnings and approval blockers still run
+text extraction, debtor parsing, review warnings, approval blockers, accounting
+return matching, response preview HTML and response PDF generation still run
 through the existing C++ workspace/domain/infrastructure path. The frontend only
-uploads a file and renders the returned review rows.
+presents state, gathers user choices and calls those endpoints.
 
 ## Local development
 
@@ -45,7 +46,7 @@ POST /api/accounting-returns
 GET  /api/accounting-returns/{returnId}
 GET  /api/response-profile
 POST /api/response-profile
-GET  /api/accounting-returns/{returnId}/responses/{rowId}/preview
+POST /api/accounting-returns/{returnId}/responses/{rowId}/preview
 POST /api/accounting-returns/{returnId}/response-exports
 GET  /api/response-exports/{exportId}
 GET  /api/response-exports/{exportId}/files/{fileId}
@@ -115,6 +116,14 @@ Implemented in MUZ-25:
 - selectable valid accounting-return rows and one generated VAR/YOK PDF per selected row
 - opaque PDF export/file download IDs so local filesystem paths are never exposed to the browser
 - integration tests for profile persistence, preview, VAR/YOK PDF creation, PDF download headers/content and invalid/blocked row failures
+
+Implemented in MUZ-27:
+
+- three-stage browser layout for ZIP review, accounting return and response PDF generation
+- row-level and selected-row response preview UI backed by the existing preview endpoint
+- blocked response rows remain unpreviewable in the browser
+- stale response preview/download state is cleared when a new ZIP or accounting return flow starts
+- static web asset tests for preview wiring, valid-row selection and stale-state cleanup hooks
 
 Not implemented yet:
 - authentication and authorization

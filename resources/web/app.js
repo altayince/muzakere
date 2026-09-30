@@ -15,19 +15,26 @@ const returnFileInput = document.querySelector("#returnFile");
 const returnMessage = document.querySelector("#returnMessage");
 const reloadReturnButton = document.querySelector("#reloadReturn");
 const selectValidResponsesButton = document.querySelector("#selectValidResponses");
+const previewSelectedResponseButton = document.querySelector("#previewSelectedResponse");
 const saveResponseProfileButton = document.querySelector("#saveResponseProfile");
 const generateResponsesButton = document.querySelector("#generateResponses");
+const clearResponsePreviewButton = document.querySelector("#clearResponsePreview");
 const responseLawyer = document.querySelector("#responseLawyer");
 const responseAddress = document.querySelector("#responseAddress");
 const responseDownloadPanel = document.querySelector("#responseDownloadPanel");
 const responseDownloadLabel = document.querySelector("#responseDownloadLabel");
 const responseDownloads = document.querySelector("#responseDownloads");
+const responsePreviewPanel = document.querySelector("#responsePreviewPanel");
+const responsePreviewTitle = document.querySelector("#responsePreviewTitle");
+const responsePreviewStatus = document.querySelector("#responsePreviewStatus");
+const responsePreviewFrame = document.querySelector("#responsePreviewFrame");
 const returnRows = document.querySelector("#returnRows");
 
 let currentBatchId = "";
 let currentReturnId = "";
 let currentRows = [];
 let currentReturnRows = [];
+let currentPreviewRowId = "";
 const dirtyRows = new Set();
 
 const labels = {
@@ -67,6 +74,25 @@ function clearResponseDownloads() {
   responseDownloadPanel.hidden = true;
   responseDownloadLabel.textContent = "";
   responseDownloads.replaceChildren();
+}
+
+function clearResponsePreview(statusText = "") {
+  currentPreviewRowId = "";
+  responsePreviewPanel.hidden = true;
+  responsePreviewTitle.textContent = "Seçili satır";
+  responsePreviewStatus.textContent = statusText;
+  responsePreviewFrame.removeAttribute("srcdoc");
+  updateButtons();
+}
+
+function resetReturnWorkflow(statusText = "") {
+  currentReturnId = "";
+  currentReturnRows = [];
+  setReturnSummary();
+  renderReturnRows([]);
+  clearResponseDownloads();
+  clearResponsePreview();
+  returnMessage.textContent = statusText;
 }
 
 function showResponseDownloads(payload) {
@@ -156,14 +182,19 @@ function rowPayload(rowId) {
 function updateButtons() {
   const hasBatch = Boolean(currentBatchId);
   const hasDirty = dirtyRows.size > 0;
+  const selectedResponses = selectedResponseRows();
+  const hasValidResponse = currentReturnRows.some((row) => row.status !== "blocked");
+  const hasProfile = responseLawyer.value.trim() !== "" && responseAddress.value.trim() !== "";
   reloadButton.disabled = !hasBatch;
   saveButton.disabled = !hasBatch || !hasDirty;
   approveButton.disabled = !hasBatch || selectedIds().length === 0;
   exportHamdataButton.disabled = !hasBatch || hasDirty;
   exportHamdataAccountingButton.disabled = !hasBatch || hasDirty;
   reloadReturnButton.disabled = !currentReturnId;
-  selectValidResponsesButton.disabled = !currentReturnId || !currentReturnRows.some((row) => row.status !== "blocked");
-  generateResponsesButton.disabled = !currentReturnId || selectedResponseIds().length === 0;
+  selectValidResponsesButton.disabled = !currentReturnId || !hasValidResponse;
+  previewSelectedResponseButton.disabled = !currentReturnId || selectedResponses.length !== 1;
+  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile;
+  clearResponsePreviewButton.disabled = responsePreviewPanel.hidden;
 }
 
 function renderRows(rows) {
@@ -220,7 +251,16 @@ function renderRows(rows) {
 }
 
 function selectedResponseIds() {
-  return [...returnRows.querySelectorAll("input[data-role=select-response]:checked")].map((item) => item.value);
+  return selectedResponseRows().map((row) => row.id);
+}
+
+function selectedResponseRows() {
+  const ids = new Set([...returnRows.querySelectorAll("input[data-role=select-response]:checked")].map((item) => item.value));
+  return currentReturnRows.filter((row) => ids.has(row.id) && row.status !== "blocked");
+}
+
+function responseRowById(rowId) {
+  return currentReturnRows.find((row) => row.id === rowId);
 }
 
 function renderReturnRows(rows) {
@@ -229,8 +269,8 @@ function renderReturnRows(rows) {
   if (!rows.length) {
     const row = document.createElement("tr");
     row.className = "empty";
-    const td = cell("Muhasebe donus satiri bulunamadi.");
-    td.colSpan = 11;
+    const td = cell("Muhasebe dönüş satırı bulunamadı.");
+    td.colSpan = 12;
     row.append(td);
     returnRows.append(row);
     updateButtons();
@@ -248,6 +288,16 @@ function renderReturnRows(rows) {
     selector.addEventListener("change", updateButtons);
     const selectCell = document.createElement("td");
     selectCell.append(selector);
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.className = "small-action";
+    preview.textContent = "Önizle";
+    preview.dataset.role = "preview-response";
+    preview.dataset.rowId = item.id;
+    preview.disabled = item.status === "blocked";
+    preview.addEventListener("click", () => previewResponse(item.id));
+    const previewCell = document.createElement("td");
+    previewCell.append(preview);
     const status = cell(labels[item.status] || item.status);
     status.className = "badge";
     const decisionText = item.decision === "var" || item.decision === "yok" ? item.decision.toUpperCase() : "—";
@@ -255,6 +305,7 @@ function renderReturnRows(rows) {
     decision.className = item.decision === "var" ? "decision-var" : item.decision === "yok" ? "decision-yok" : "decision-blocked";
     row.append(
       selectCell,
+      previewCell,
       status,
       decision,
       cell(item.amount?.text || item.accountingInput || ""),
@@ -274,14 +325,15 @@ function renderReturnRows(rows) {
 
 async function loadReturn() {
   if (!currentReturnId) return;
-  returnMessage.textContent = "Muhasebe donusu yenileniyor...";
+  returnMessage.textContent = "Muhasebe dönüşü yenileniyor...";
   const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}`);
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error?.message || "Muhasebe donusu alinamadi.");
+  if (!response.ok) throw new Error(payload.error?.message || "Muhasebe dönüşü alınamadı.");
   setReturnSummary(payload.summary);
   renderReturnRows(payload.rows || []);
-  returnMessage.textContent = `Muhasebe donusu guncel. Return: ${payload.return.id}`;
   clearResponseDownloads();
+  clearResponsePreview();
+  returnMessage.textContent = `Muhasebe dönüşü güncel. Return: ${payload.return.id}`;
   updateButtons();
 }
 
@@ -323,6 +375,7 @@ form.addEventListener("submit", async (event) => {
   const button = form.querySelector("button");
   button.disabled = true;
   clearDownload();
+  resetReturnWorkflow();
   message.textContent = "ZIP işleniyor...";
   try {
     const body = new FormData();
@@ -399,18 +452,21 @@ returnForm.addEventListener("submit", async (event) => {
   if (!file) return;
   const button = returnForm.querySelector("button");
   button.disabled = true;
-  returnMessage.textContent = "Muhasebe donusu isleniyor...";
+  clearResponseDownloads();
+  clearResponsePreview();
+  returnMessage.textContent = "Muhasebe dönüşü işleniyor...";
   try {
     const body = new FormData();
     body.append("file", file);
     const response = await fetch("/api/accounting-returns", { method: "POST", body });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error?.message || "Muhasebe donusu ice aktarilamadi.");
+    if (!response.ok) throw new Error(payload.error?.message || "Muhasebe dönüşü içe aktarılamadı.");
     currentReturnId = payload.return.id;
     setReturnSummary(payload.summary);
     renderReturnRows(payload.rows || []);
     clearResponseDownloads();
-    returnMessage.textContent = `${payload.summary.total} satir eslesti. Return: ${payload.return.id}`;
+    clearResponsePreview();
+    returnMessage.textContent = `${payload.summary.total} satır eşleşti. Return: ${payload.return.id}`;
     updateButtons();
   } catch (error) {
     returnMessage.textContent = error.message;
@@ -431,9 +487,47 @@ reloadReturnButton.addEventListener("click", async () => {
 async function loadResponseProfile() {
   const response = await fetch("/api/response-profile");
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error?.message || "Profil alinamadi.");
+  if (!response.ok) throw new Error(payload.error?.message || "Profil alınamadı.");
   responseLawyer.value = payload.profile?.lawyer || "";
   responseAddress.value = payload.profile?.address || "";
+  updateButtons();
+}
+
+async function previewResponse(rowId) {
+  const row = responseRowById(rowId);
+  if (!currentReturnId || !row || row.status === "blocked") {
+    clearResponsePreview("Bu satır önizlenemez.");
+    return;
+  }
+  currentPreviewRowId = rowId;
+  responsePreviewPanel.hidden = false;
+  responsePreviewTitle.textContent = `${row.caseNumber || "Dosya"} · ${row.debtor || "Borçlu"}`;
+  responsePreviewStatus.textContent = "Önizleme hazırlanıyor...";
+  responsePreviewFrame.removeAttribute("srcdoc");
+  updateButtons();
+  try {
+    const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}/responses/${encodeURIComponent(rowId)}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: {
+          lawyer: responseLawyer.value,
+          address: responseAddress.value
+        }
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error?.message || "Önizleme alınamadı.");
+    if (currentPreviewRowId !== rowId) return;
+    responsePreviewFrame.srcdoc = payload.html || "";
+    responsePreviewStatus.textContent = "Önizleme güncel.";
+  } catch (error) {
+    if (currentPreviewRowId !== rowId) return;
+    responsePreviewFrame.removeAttribute("srcdoc");
+    responsePreviewStatus.textContent = error.message;
+  } finally {
+    updateButtons();
+  }
 }
 
 async function saveResponseProfile() {
@@ -443,6 +537,8 @@ async function saveResponseProfile() {
   });
   responseLawyer.value = payload.profile?.lawyer || "";
   responseAddress.value = payload.profile?.address || "";
+  clearResponseDownloads();
+  clearResponsePreview();
   returnMessage.textContent = "Profil kaydedildi.";
 }
 
@@ -453,6 +549,14 @@ selectValidResponsesButton.addEventListener("click", () => {
   updateButtons();
 });
 
+previewSelectedResponseButton.addEventListener("click", async () => {
+  const [row] = selectedResponseRows();
+  if (!row) return;
+  await previewResponse(row.id);
+});
+
+clearResponsePreviewButton.addEventListener("click", () => clearResponsePreview());
+
 saveResponseProfileButton.addEventListener("click", async () => {
   try {
     await saveResponseProfile();
@@ -461,8 +565,16 @@ saveResponseProfileButton.addEventListener("click", async () => {
   }
 });
 
-responseLawyer.addEventListener("input", updateButtons);
-responseAddress.addEventListener("input", updateButtons);
+responseLawyer.addEventListener("input", () => {
+  clearResponseDownloads();
+  clearResponsePreview();
+  updateButtons();
+});
+responseAddress.addEventListener("input", () => {
+  clearResponseDownloads();
+  clearResponsePreview();
+  updateButtons();
+});
 
 if (returnForm) {
   loadResponseProfile().catch((error) => { returnMessage.textContent = error.message; });
@@ -480,7 +592,7 @@ generateResponsesButton.addEventListener("click", async () => {
       }
     }, 201);
     showResponseDownloads(payload);
-    returnMessage.textContent = `${(payload.files || []).length} PDF olusturuldu.`;
+    returnMessage.textContent = `${(payload.files || []).length} PDF oluşturuldu.`;
   } catch (error) {
     returnMessage.textContent = error.message;
   }

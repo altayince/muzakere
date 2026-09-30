@@ -64,7 +64,7 @@ private:
     [[nodiscard]] QByteArray accounting_return_state(const QString& return_id, int& status) const;
     [[nodiscard]] QByteArray response_profile_state(int& status) const;
     [[nodiscard]] QByteArray save_response_profile(const Request& request, int& status) const;
-    [[nodiscard]] QByteArray preview_response(const QString& return_id, const QString& row_id, int& status) const;
+    [[nodiscard]] QByteArray preview_response(const QString& return_id, const QString& row_id, const Request& request, int& status) const;
     [[nodiscard]] QByteArray create_response_export(const QString& return_id, const Request& request, int& status) const;
     [[nodiscard]] QByteArray response_export_state(const QString& export_id, int& status) const;
     [[nodiscard]] QByteArray download_response_file(const QString& export_id, const QString& file_id, int& status,

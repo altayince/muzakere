@@ -225,13 +225,34 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     const auto page = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(server.port()))));
     REQUIRE(page.status == 200);
     REQUIRE(page.body.contains("ZIP"));
-    REQUIRE(page.body.contains("Secili PDFleri"));
+    REQUIRE(page.body.contains("stage-import"));
+    REQUIRE(page.body.contains("stage-accounting"));
+    REQUIRE(page.body.contains("stage-responses"));
+    REQUIRE(page.body.contains("previewSelectedResponse"));
+    REQUIRE(page.body.contains("responsePreviewPanel"));
+    REQUIRE(page.body.contains("clearResponsePreview"));
 
     const auto script = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/app.js").arg(server.port()))));
     REQUIRE(script.status == 200);
     REQUIRE(script.body.contains("decision-blocked"));
     REQUIRE(script.body.contains("showResponseDownloads"));
+    REQUIRE(script.body.contains("previewResponse"));
+    REQUIRE(script.body.contains("/preview"));
+    REQUIRE(script.body.contains("method: \"POST\""));
+    REQUIRE(script.body.contains("lawyer: responseLawyer.value"));
+    REQUIRE(script.body.contains("address: responseAddress.value"));
+    REQUIRE(script.body.contains("catch (error)"));
+    REQUIRE(script.body.count("if (currentPreviewRowId !== rowId) return;") >= 2);
+    REQUIRE(script.body.contains("preview.disabled = item.status === \"blocked\""));
+    REQUIRE(script.body.contains("input.checked = !input.disabled"));
+    REQUIRE(script.body.contains("clearResponseDownloads();"));
+    REQUIRE(script.body.contains("clearResponsePreview();"));
     REQUIRE(script.body.contains(QByteArray("\xE2\x80\x94")));
+
+    const auto styles = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/styles.css").arg(server.port()))));
+    REQUIRE(styles.status == 200);
+    REQUIRE(styles.body.contains("preview-panel"));
+    REQUIRE(styles.body.contains("response-workbench"));
 }
 
 TEST_CASE("Web ZIP import uses existing parser and serializes review rows", "[integration][web]") {
@@ -671,21 +692,38 @@ TEST_CASE("Web response profile preview export and PDF downloads use C++ workspa
     QJsonArray row_ids;
     for (const auto& row : rows) row_ids.append(row.toObject()["id"].toString());
 
-    const QJsonObject profile{{"lawyer", "Av. WEB TEST"}, {"address", "WEB TEST ADRES"}};
+    const QJsonObject saved_profile{{"lawyer", "Av. SAVED"}, {"address", "SAVED ADRES"}};
+    const QJsonObject preview_profile{{"lawyer", "Av. UNSAVED PREVIEW"}, {"address", "UNSAVED PREVIEW ADRES"}};
+    const QJsonObject generated_profile{{"lawyer", "Av. WEB TEST"}, {"address", "WEB TEST ADRES"}};
     auto profile_payload = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-profile").arg(server.port())),
-        {{"profile", profile}});
-    REQUIRE(profile_payload["profile"].toObject()["lawyer"].toString() == "Av. WEB TEST");
-    profile_payload = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-profile").arg(server.port())));
-    REQUIRE(profile_payload["profile"].toObject()["address"].toString() == "WEB TEST ADRES");
+        {{"profile", saved_profile}});
+    REQUIRE(profile_payload["profile"].toObject()["lawyer"].toString() == "Av. SAVED");
 
     const auto first_row_id = rows[0].toObject()["id"].toString();
-    auto preview = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
-        .arg(server.port()).arg(return_id, first_row_id)));
-    REQUIRE(preview["html"].toString().contains("Av. WEB TEST"));
+    auto preview = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
+        .arg(server.port()).arg(return_id, first_row_id)), {{"profile", preview_profile}});
+    REQUIRE(preview["html"].toString().contains("Av. UNSAVED PREVIEW"));
+    REQUIRE(preview["html"].toString().contains("UNSAVED PREVIEW ADRES"));
+    REQUIRE_FALSE(preview["html"].toString().contains("Av. SAVED"));
     REQUIRE(preview["html"].toString().contains("TEST MUHATAP"));
+    profile_payload = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-profile").arg(server.port())));
+    REQUIRE(profile_payload["profile"].toObject()["lawyer"].toString() == "Av. SAVED");
+    REQUIRE(profile_payload["profile"].toObject()["address"].toString() == "SAVED ADRES");
+
+    const QJsonObject changed_preview_profile{{"lawyer", "Av. UNSAVED CHANGED"}, {"address", "CHANGED PREVIEW ADRES"}};
+    preview = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
+        .arg(server.port()).arg(return_id, first_row_id)), {{"profile", changed_preview_profile}});
+    REQUIRE(preview["html"].toString().contains("Av. UNSAVED CHANGED"));
+    REQUIRE_FALSE(preview["html"].toString().contains("Av. UNSAVED PREVIEW"));
+    profile_payload = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-profile").arg(server.port())));
+    REQUIRE(profile_payload["profile"].toObject()["lawyer"].toString() == "Av. SAVED");
+
+    const auto old_get_preview = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
+        .arg(server.port()).arg(return_id, first_row_id)), 405);
+    REQUIRE(old_get_preview["error"].toObject()["code"].toString() == "method_not_allowed");
 
     auto created = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
-        .arg(server.port()).arg(return_id)), {{"rowIds", row_ids}, {"profile", profile}}, 201);
+        .arg(server.port()).arg(return_id)), {{"rowIds", row_ids}, {"profile", generated_profile}}, 201);
     REQUIRE(created["exportId"].toString().size() == 36);
     REQUIRE(created["returnId"].toString() == return_id);
     REQUIRE_FALSE(QJsonDocument(created).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
@@ -842,8 +880,8 @@ TEST_CASE("Web response export rejects blocked rows and malformed identifiers wi
     failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
         .arg(server.port()).arg(blocked_return_id)), {{"rowIds", QJsonArray{blocked_id}}, {"profile", profile}}, 400);
     REQUIRE(failed["error"].toObject()["code"].toString() == "response_generation_failed");
-    auto preview = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
-        .arg(server.port()).arg(blocked_return_id, blocked_id)), 400);
+    auto preview = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
+        .arg(server.port()).arg(blocked_return_id, blocked_id)), {{"profile", profile}}, 400);
     REQUIRE(preview["error"].toObject()["code"].toString() == "preview_failed");
     REQUIRE_FALSE(QJsonDocument(failed).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
 

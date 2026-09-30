@@ -446,9 +446,10 @@ void WebServer::handle(QTcpSocket* socket, const Request& request) {
         return;
     }
     if (segments.size() == 6 && segments[0] == "api" && segments[1] == "accounting-returns" &&
-        segments[3] == "responses" && segments[5] == "preview" && request.method == "GET") {
+        segments[3] == "responses" && segments[5] == "preview") {
         int status = 200;
-        respond(socket, status, preview_response(segments[2], segments[4], status));
+        if (request.method == "POST") respond(socket, status, preview_response(segments[2], segments[4], request, status));
+        else respond(socket, 405, json(error_body("method_not_allowed", "Method is not supported.")));
         return;
     }
     if (segments.size() == 4 && segments[0] == "api" && segments[1] == "accounting-returns" &&
@@ -797,8 +798,18 @@ QByteArray WebServer::save_response_profile(const Request& request, int& status)
     }
 }
 
-QByteArray WebServer::preview_response(const QString& return_id, const QString& row_id, int& status) const {
+QByteArray WebServer::preview_response(const QString& return_id, const QString& row_id, const Request& request, int& status) const {
     try {
+        const auto payload = parse_json_object(request.body);
+        ResponseProfile profile;
+        if (!payload || !profile_from_json(*payload, profile)) {
+            status = 400;
+            return json(error_body("bad_payload", "Profile with lawyer and address is required."));
+        }
+        if (profile.lawyer.size() > 1000 || profile.address.size() > 4000) {
+            status = 400;
+            return json(error_body("bad_payload", "Profile is too long."));
+        }
         const auto id = return_id.toStdString();
         const auto rows = workspace_.response_rows(id);
         const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
@@ -809,7 +820,7 @@ QByteArray WebServer::preview_response(const QString& return_id, const QString& 
             return json(error_body("row_not_found", "Response row was not found."));
         }
         status = 200;
-        return json({{"html", text(workspace_.preview_response(*found, workspace_.response_profile()))}});
+        return json({{"html", text(workspace_.preview_response(*found, profile))}});
     } catch (const Error& error) {
         status = error.code() == ErrorCode::invalid_input ? 400 : 500;
         return json(error_body("preview_failed", "Response preview could not be generated."));
