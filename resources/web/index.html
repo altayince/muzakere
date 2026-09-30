@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Muzakere</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Muzakere Web</p>
+      <h1>ZIP inceleme</h1>
+    </div>
+    <nav aria-label="Ana akış">
+      <a class="active" href="/">Imports</a>
+      <a aria-disabled="true">Review</a>
+      <a aria-disabled="true">Accounting</a>
+      <a aria-disabled="true">Responses</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="upload-panel">
+      <form id="uploadForm">
+        <label for="zipFile">ZIP dosyası</label>
+        <div class="upload-row">
+          <input id="zipFile" name="file" type="file" accept=".zip,application/zip" required>
+          <button type="submit">Yükle ve incele</button>
+        </div>
+      </form>
+      <p id="message" role="status"></p>
+    </section>
+
+    <section class="summary" aria-live="polite">
+      <div><strong id="total">0</strong><span>Toplam</span></div>
+      <div><strong id="ready">0</strong><span>Sorunsuz</span></div>
+      <div><strong id="review">0</strong><span>İnceleme</span></div>
+      <div><strong id="blocked">0</strong><span>Blokaj</span></div>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Durum</th>
+            <th>Tebliğ</th>
+            <th>İcra dairesi</th>
+            <th>Dosya</th>
+            <th>Borçlu</th>
+            <th>TCKN/VKN</th>
+            <th>Tutar</th>
+            <th>Muhatap</th>
+            <th>Uyarı</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr class="empty"><td colspan="9">Henüz ZIP yüklenmedi.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -59,3 +59,10 @@ jobs:
         run: cmake --build --preset dev --parallel 4
       - name: Unit, integration and desktop smoke tests
         run: ctest --preset dev
+  container-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container and run embedded smoke checks
+        run: docker build -t muzakere-web-smoke .
