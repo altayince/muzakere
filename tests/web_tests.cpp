@@ -225,13 +225,29 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     const auto page = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(server.port()))));
     REQUIRE(page.status == 200);
     REQUIRE(page.body.contains("ZIP"));
-    REQUIRE(page.body.contains("Secili PDFleri"));
+    REQUIRE(page.body.contains("stage-import"));
+    REQUIRE(page.body.contains("stage-accounting"));
+    REQUIRE(page.body.contains("stage-responses"));
+    REQUIRE(page.body.contains("previewSelectedResponse"));
+    REQUIRE(page.body.contains("responsePreviewPanel"));
+    REQUIRE(page.body.contains("clearResponsePreview"));
 
     const auto script = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/app.js").arg(server.port()))));
     REQUIRE(script.status == 200);
     REQUIRE(script.body.contains("decision-blocked"));
     REQUIRE(script.body.contains("showResponseDownloads"));
+    REQUIRE(script.body.contains("previewResponse"));
+    REQUIRE(script.body.contains("/preview"));
+    REQUIRE(script.body.contains("preview.disabled = item.status === \"blocked\""));
+    REQUIRE(script.body.contains("input.checked = !input.disabled"));
+    REQUIRE(script.body.contains("clearResponseDownloads();"));
+    REQUIRE(script.body.contains("clearResponsePreview();"));
     REQUIRE(script.body.contains(QByteArray("\xE2\x80\x94")));
+
+    const auto styles = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/styles.css").arg(server.port()))));
+    REQUIRE(styles.status == 200);
+    REQUIRE(styles.body.contains("preview-panel"));
+    REQUIRE(styles.body.contains("response-workbench"));
 }
 
 TEST_CASE("Web ZIP import uses existing parser and serializes review rows", "[integration][web]") {
