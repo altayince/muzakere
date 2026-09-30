@@ -10,8 +10,14 @@ const exportHamdataAccountingButton = document.querySelector("#exportHamdataAcco
 const downloadPanel = document.querySelector("#downloadPanel");
 const downloadLabel = document.querySelector("#downloadLabel");
 const downloadWorkbook = document.querySelector("#downloadWorkbook");
+const returnForm = document.querySelector("#returnForm");
+const returnFileInput = document.querySelector("#returnFile");
+const returnMessage = document.querySelector("#returnMessage");
+const reloadReturnButton = document.querySelector("#reloadReturn");
+const returnRows = document.querySelector("#returnRows");
 
 let currentBatchId = "";
+let currentReturnId = "";
 let currentRows = [];
 const dirtyRows = new Set();
 
@@ -51,6 +57,19 @@ function showDownload(payload) {
 function setSummary(summary = {}) {
   for (const id of ["total", "ready", "review", "blocked", "approved"]) {
     document.querySelector(`#${id}`).textContent = summary[id] ?? 0;
+  }
+}
+
+function setReturnSummary(summary = {}) {
+  const values = {
+    returnTotal: summary.total,
+    returnVar: summary.var,
+    returnYok: summary.yok,
+    returnReview: summary.review,
+    returnBlocked: summary.blocked
+  };
+  for (const [id, value] of Object.entries(values)) {
+    document.querySelector(`#${id}`).textContent = value ?? 0;
   }
 }
 
@@ -113,6 +132,7 @@ function updateButtons() {
   approveButton.disabled = !hasBatch || selectedIds().length === 0;
   exportHamdataButton.disabled = !hasBatch || hasDirty;
   exportHamdataAccountingButton.disabled = !hasBatch || hasDirty;
+  reloadReturnButton.disabled = !currentReturnId;
 }
 
 function renderRows(rows) {
@@ -165,6 +185,53 @@ function renderRows(rows) {
     row.lastElementChild.className = "issues";
     tbody.append(row);
   }
+  updateButtons();
+}
+
+function renderReturnRows(rows) {
+  returnRows.replaceChildren();
+  if (!rows.length) {
+    const row = document.createElement("tr");
+    row.className = "empty";
+    const td = cell("Muhasebe donus satiri bulunamadi.");
+    td.colSpan = 10;
+    row.append(td);
+    returnRows.append(row);
+    return;
+  }
+  for (const item of rows) {
+    const row = document.createElement("tr");
+    row.className = item.status;
+    const status = cell(labels[item.status] || item.status);
+    status.className = "badge";
+    const decision = cell((item.decision || "").toUpperCase());
+    decision.className = item.decision === "var" ? "decision-var" : "decision-yok";
+    row.append(
+      status,
+      decision,
+      cell(item.amount?.text || item.accountingInput || ""),
+      cell(item.debtor),
+      cell(item.debtorId),
+      cell(item.caseNumber),
+      cell(item.office),
+      cell(item.creditor),
+      cell(item.recipient),
+      cell([...(item.warnings || []), ...(item.blockers || [])].join("; "))
+    );
+    row.lastElementChild.className = "issues";
+    returnRows.append(row);
+  }
+}
+
+async function loadReturn() {
+  if (!currentReturnId) return;
+  returnMessage.textContent = "Muhasebe donusu yenileniyor...";
+  const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}`);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error?.message || "Muhasebe donusu alinamadi.");
+  setReturnSummary(payload.summary);
+  renderReturnRows(payload.rows || []);
+  returnMessage.textContent = `Muhasebe donusu guncel. Return: ${payload.return.id}`;
   updateButtons();
 }
 
@@ -272,5 +339,39 @@ exportHamdataAccountingButton.addEventListener("click", async () => {
     await generateWorkbook("hamdata-with-accounting");
   } catch (error) {
     message.textContent = error.message;
+  }
+});
+
+
+returnForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const [file] = returnFileInput.files;
+  if (!file) return;
+  const button = returnForm.querySelector("button");
+  button.disabled = true;
+  returnMessage.textContent = "Muhasebe donusu isleniyor...";
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("/api/accounting-returns", { method: "POST", body });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error?.message || "Muhasebe donusu ice aktarilamadi.");
+    currentReturnId = payload.return.id;
+    setReturnSummary(payload.summary);
+    renderReturnRows(payload.rows || []);
+    returnMessage.textContent = `${payload.summary.total} satir eslesti. Return: ${payload.return.id}`;
+    updateButtons();
+  } catch (error) {
+    returnMessage.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+reloadReturnButton.addEventListener("click", async () => {
+  try {
+    await loadReturn();
+  } catch (error) {
+    returnMessage.textContent = error.message;
   }
 });

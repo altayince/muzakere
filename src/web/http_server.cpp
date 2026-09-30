@@ -91,6 +91,82 @@ QJsonArray strings(const std::vector<std::string>& values) {
     return result;
 }
 
+QString response_decision(const ResponseRow& row) {
+    return row.available_cents.has_value() ? QStringLiteral("var") : QStringLiteral("yok");
+}
+
+QString response_status(const ResponseRow& row) {
+    if (!row.errors.empty()) return QStringLiteral("blocked");
+    if (!row.source.warnings.empty()) return QStringLiteral("review");
+    return QStringLiteral("ready");
+}
+
+QString response_color(const ResponseRow& row) {
+    if (!row.errors.empty()) return QStringLiteral("red");
+    if (!row.source.warnings.empty()) return QStringLiteral("yellow");
+    return QStringLiteral("green");
+}
+
+QString money_text(std::int64_t cents) {
+    return cents < 0 ? QStringLiteral("-") + text(format_money(-cents)) : text(format_money(cents));
+}
+
+QJsonObject response_row_json(const ResponseRow& row) {
+    QJsonObject amount;
+    if (row.available_cents) {
+        amount.insert("cents", QString::number(*row.available_cents));
+        amount.insert("text", money_text(*row.available_cents));
+    }
+    return {
+        {"id", text(row.id)},
+        {"returnId", text(row.return_id)},
+        {"status", response_status(row)},
+        {"color", response_color(row)},
+        {"decision", response_decision(row)},
+        {"available", row.available_cents.has_value()},
+        {"amount", amount},
+        {"accountingInput", text(row.accounting_input)},
+        {"debtor", text(row.source.cells[debtor])},
+        {"debtorId", text(row.source.cells[debtor_id])},
+        {"caseNumber", text(row.source.cells[case_number])},
+        {"office", text(row.source.cells[office])},
+        {"creditor", text(row.source.cells[creditor])},
+        {"recipient", text(recipient_text(row.source))},
+        {"demo", row.demo},
+        {"warnings", strings(row.source.warnings)},
+        {"blockers", strings(row.errors)}
+    };
+}
+
+QJsonObject accounting_return_json(const AccountingReturn& item, const std::vector<ResponseRow>& rows) {
+    QJsonArray row_items;
+    int var = 0, yok = 0, ready = 0, review = 0, blocked = 0;
+    for (const auto& row : rows) {
+        if (row.available_cents) ++var;
+        else ++yok;
+        if (!row.errors.empty()) ++blocked;
+        else if (!row.source.warnings.empty()) ++review;
+        else ++ready;
+        row_items.append(response_row_json(row));
+    }
+    return {
+        {"return", QJsonObject{
+            {"id", text(item.id)},
+            {"sourceName", text(item.source_name)},
+            {"createdAt", text(item.created_at)}
+        }},
+        {"summary", QJsonObject{
+            {"total", row_items.size()},
+            {"var", var},
+            {"yok", yok},
+            {"ready", ready},
+            {"review", review},
+            {"blocked", blocked}
+        }},
+        {"rows", row_items}
+    };
+}
+
 QJsonObject row_json(const AccountingRow& row) {
     const auto status = review_status(row);
     const QJsonObject cells{
@@ -330,6 +406,16 @@ void WebServer::handle(QTcpSocket* socket, const Request& request) {
         std::vector<Header> headers;
         const auto body = download_export(segments[2], status, content_type, headers);
         respond(socket, status, body, content_type.isEmpty() ? QByteArray("application/json") : content_type, headers);
+        return;
+    }
+    if (segments.size() == 2 && segments[0] == "api" && segments[1] == "accounting-returns" && request.method == "POST") {
+        int status = 200;
+        respond(socket, status, import_accounting_return(request, status));
+        return;
+    }
+    if (segments.size() == 3 && segments[0] == "api" && segments[1] == "accounting-returns" && request.method == "GET") {
+        int status = 200;
+        respond(socket, status, accounting_return_state(segments[2], status));
         return;
     }
     if (request.method == "POST" && request.path == "/api/imports") {
@@ -578,6 +664,56 @@ QByteArray WebServer::download_export(const QString& export_id, int& status, QBy
     headers.push_back({"Content-Disposition", QByteArray("attachment; filename=\"") + export_file.filename.toUtf8() + "\""});
     headers.push_back({"Cache-Control", "no-store"});
     return file.readAll();
+}
+
+QByteArray WebServer::import_accounting_return(const Request& request, int& status) const {
+    try {
+        const auto content_type = request.headers.value("content-type");
+        const auto type = lower(content_type);
+        std::optional<QByteArray> upload;
+        if (type.startsWith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+            type.startsWith("application/octet-stream"))
+            upload = request.body;
+        else if (type.startsWith("multipart/form-data"))
+            upload = multipart_file(request.body, content_type);
+        else {
+            status = 415;
+            return json(error_body("unsupported_media_type", "XLSX workbook upload expected."));
+        }
+        if (!upload || upload->isEmpty()) {
+            status = 400;
+            return json(error_body("missing_file", "Upload must contain an XLSX file field named file."));
+        }
+        QTemporaryDir temporary;
+        if (!temporary.isValid()) throw Error(ErrorCode::file_io);
+        const auto upload_path = temporary.path() + "/return.xlsx";
+        QFile file(upload_path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly) || file.write(*upload) != upload->size())
+            throw Error(ErrorCode::file_io);
+        file.close();
+        const auto imported = workspace_.import_accounting_return(native_path(upload_path));
+        status = 201;
+        return json(accounting_return_json(imported, imported.rows));
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("return_import_failed", "Accounting return workbook could not be imported."));
+    }
+}
+
+QByteArray WebServer::accounting_return_state(const QString& return_id, int& status) const {
+    try {
+        const auto id = return_id.toStdString();
+        const auto returns = workspace_.accounting_returns();
+        const auto found = std::find_if(returns.begin(), returns.end(), [&](const auto& item) { return item.id == id; });
+        if (found == returns.end()) {
+            status = 404;
+            return json(error_body("return_not_found", "Accounting return was not found."));
+        }
+        return json(accounting_return_json(*found, workspace_.response_rows(id)));
+    } catch (const Error&) {
+        status = 500;
+        return json(error_body("return_load_failed", "Accounting return state could not be loaded."));
+    }
 }
 
 } // namespace muz

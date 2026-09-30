@@ -41,6 +41,8 @@ POST /api/batches/{batchId}/review/approve
 POST /api/batches/{batchId}/exports/hamdata
 POST /api/batches/{batchId}/exports/hamdata-with-accounting
 GET  /api/exports/{exportId}/download
+POST /api/accounting-returns
+GET  /api/accounting-returns/{returnId}
 ```
 
 `POST /api/imports` accepts either raw `application/zip` bytes or a
@@ -91,9 +93,15 @@ Implemented in MUZ-21:
 - web export flow that calls the existing core exporter without adding approval or validation gates
 - integration tests for XLSX downloads, headers, invalid IDs, blockers and MUHASEBE deduplication
 
-Not implemented yet:
+Implemented in MUZ-23:
 
-- accounting return import
+- browser upload for returned HAMDATA/MUHASEBE `.xlsx` workbooks
+- accounting-return endpoints backed by `LocalWorkspace::import_accounting_return` and `response_rows`
+- persisted return review reload by return id
+- browser table for VAR/YOK, warnings and blockers from existing C++ matching logic
+- integration tests for numeric, zero, signed and blank returns, fanout, duplicate/missing matches, invalid cells and malformed uploads
+
+Not implemented yet:
 - VAR/YOK PDF generation and download
 - authentication and authorization
 - cloud object/database storage

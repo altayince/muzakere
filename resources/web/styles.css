@@ -222,6 +222,31 @@ td input[type=checkbox] {
   min-width: 220px;
 }
 
+.return-panel {
+  margin-top: 16px;
+}
+
+.return-summary {
+  margin-top: 16px;
+}
+
+.return-table table {
+  min-width: 1100px;
+}
+
+.decision-var,
+.decision-yok {
+  font-weight: 700;
+}
+
+.decision-var {
+  color: var(--green-ink);
+}
+
+.decision-yok {
+  color: var(--muted);
+}
+
 @media (max-width: 760px) {
   .topbar {
     align-items: stretch;

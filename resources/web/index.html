@@ -76,6 +76,51 @@
         </tbody>
       </table>
     </section>
+
+
+    <section class="upload-panel return-panel">
+      <form id="returnForm">
+        <label for="returnFile">Muhasebe donusu XLSX</label>
+        <div class="upload-row">
+          <input id="returnFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+          <button type="submit">Donusu yukle ve eslestir</button>
+        </div>
+      </form>
+      <div class="review-actions">
+        <button id="reloadReturn" type="button" disabled>Donusu yenile</button>
+      </div>
+      <p id="returnMessage" role="status"></p>
+    </section>
+
+    <section class="summary return-summary" aria-live="polite">
+      <div><strong id="returnTotal">0</strong><span>Toplam</span></div>
+      <div><strong id="returnVar">0</strong><span>VAR</span></div>
+      <div><strong id="returnYok">0</strong><span>YOK</span></div>
+      <div><strong id="returnReview">0</strong><span>Uyari</span></div>
+      <div><strong id="returnBlocked">0</strong><span>Blokaj</span></div>
+    </section>
+
+    <section class="table-wrap return-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Durum</th>
+            <th>VAR/YOK</th>
+            <th>Donen deger</th>
+            <th>Borclu</th>
+            <th>TCKN/VKN</th>
+            <th>Dosya</th>
+            <th>Icra dairesi</th>
+            <th>Alacakli</th>
+            <th>Muhatap</th>
+            <th>Uyari / Blokaj</th>
+          </tr>
+        </thead>
+        <tbody id="returnRows">
+          <tr class="empty"><td colspan="10">Henuz muhasebe donusu yuklenmedi.</td></tr>
+        </tbody>
+      </table>
+    </section>
   </main>
 
   <script src="/app.js"></script>

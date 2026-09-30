@@ -1,5 +1,7 @@
 #include "muz/infrastructure/local_workspace.hpp"
 #include "muz/web/http_server.hpp"
+#include "accounting_adapters.hpp"
+#include "response_adapters.hpp"
 #include "qt_paths.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,8 +16,13 @@
 #include <QPdfWriter>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QUuid>
+#include <xlsxcellformula.h>
 #include <xlsxdocument.h>
+#include <xlsxworksheet.h>
+#include <functional>
 #include <miniz.h>
+#include <tuple>
 
 namespace {
 QByteArray pdf(const QString& text) {
@@ -140,6 +147,66 @@ QString save_xlsx(const QByteArray& bytes, QTemporaryDir& temp, const QString& n
     REQUIRE(file.write(bytes) == bytes.size());
     file.close();
     return path;
+}
+
+QByteArray file_bytes(const QString& path) {
+    QFile file(path);
+    REQUIRE(file.open(QIODevice::ReadOnly));
+    return file.readAll();
+}
+
+std::vector<muz::AccountingRow> response_rows_sample() {
+    std::vector<muz::AccountingRow> rows;
+    const std::vector<std::tuple<std::string, std::string, std::string>> data{
+        {"row-a1", "11111111111", "AYNI AD"},
+        {"row-a2", "11111111111", "AYNI AD"},
+        {"row-b", "22222222222", "AYNI AD"},
+        {"row-c", "33333333333", "SIFIR BORCLU"},
+        {"row-d", "44444444444", "EKSI BORCLU"}
+    };
+    int index = 1;
+    for (const auto& [id, debtor_id, debtor_name] : data) {
+        muz::AccountingRow row;
+        row.id = id;
+        row.document_id = id + "-doc";
+        row.batch_id = "web-return";
+        row.envelope_id = id + "-envelope";
+        row.source_path = id + ".pdf";
+        row.sha256 = std::string(64, 'a');
+        row.recipient = "TEST MUHATAP";
+        row.approved = true;
+        row.cells = {"07.09.2026", "ANKARA 8. GENEL ICRA DAIRESI", "2026/" + std::to_string(index), "1234,56",
+            debtor_name, debtor_id, "TEST ALACAKLI", "TR000000000000000000000000", "Evet", ""};
+        rows.push_back(row);
+        ++index;
+    }
+    return rows;
+}
+
+QByteArray returned_hamdata_workbook(QTemporaryDir& temp, const std::function<void(QXlsx::Document&)>& edit) {
+    const auto path = temp.path() + "/returned-source.xlsx";
+    muz::write_hamdata_xlsx(response_rows_sample(), muz::native_path(path), true);
+    QXlsx::Document book(path);
+    REQUIRE(book.load());
+    edit(book);
+    const auto returned = temp.path() + '/' + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".xlsx";
+    REQUIRE(book.saveAs(returned));
+    return file_bytes(returned);
+}
+
+QJsonObject upload_return(QNetworkAccessManager& network, quint16 port, const QByteArray& workbook,
+        int expected_status = 201, const QByteArray& field_name = "file",
+        const QByteArray& content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+    QNetworkRequest upload(QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns").arg(port)));
+    const auto boundary = QByteArray("----MuzReturnBoundary");
+    upload.setHeader(QNetworkRequest::ContentTypeHeader, "multipart/form-data; boundary=" + boundary);
+    QByteArray body = "--" + boundary +
+        "\r\nContent-Disposition: form-data; name=\"" + field_name + "\"; filename=\"return.xlsx\"\r\n"
+        "Content-Type: " + content_type + "\r\n\r\n" + workbook + "\r\n--" + boundary + "--\r\n";
+    const auto result = request(network, upload, body);
+    INFO(result.body.constData());
+    REQUIRE(result.status == expected_status);
+    return QJsonDocument::fromJson(result.body).object();
 }
 } // namespace
 
@@ -442,4 +509,116 @@ TEST_CASE("Web HAMDATA export reports unknown ids without exposing paths", "[int
         .arg(server.port())), 404);
     REQUIRE(unknown_export["error"].toObject()["code"].toString() == "export_not_found");
     REQUIRE_FALSE(QJsonDocument(unknown_export).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+}
+
+TEST_CASE("Web accounting return upload renders persisted VAR YOK and fanout state from core", "[integration][web][return]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+
+    const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 4, 123.45));
+        REQUIRE(book.write(4, 4, 0));
+        REQUIRE(book.write(5, 4, -25.5));
+    });
+    const auto core = muz::read_accounting_return(workbook);
+    REQUIRE(core.rows.size() == 5);
+
+    QNetworkAccessManager network;
+    auto payload = upload_return(network, server.port(), workbook);
+    const auto return_id = payload["return"].toObject()["id"].toString();
+    REQUIRE(return_id.size() == 36);
+    REQUIRE(payload["summary"].toObject()["total"].toInt() == 5);
+    REQUIRE(payload["summary"].toObject()["var"].toInt() == 4);
+    REQUIRE(payload["summary"].toObject()["yok"].toInt() == 1);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() == 0);
+    REQUIRE_FALSE(QJsonDocument(payload).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+
+    const auto rows = payload["rows"].toArray();
+    REQUIRE(rows[0].toObject()["decision"].toString() == "var");
+    REQUIRE(rows[0].toObject()["amount"].toObject()["cents"].toString() == "12345");
+    REQUIRE(rows[1].toObject()["decision"].toString() == "var");
+    REQUIRE(rows[1].toObject()["amount"].toObject()["cents"].toString() == "12345");
+    REQUIRE(rows[1].toObject()["caseNumber"].toString() == "2026/2");
+    REQUIRE(rows[2].toObject()["decision"].toString() == "yok");
+    REQUIRE(rows[2].toObject()["debtor"].toString() == "AYNI AD");
+    REQUIRE(rows[2].toObject()["debtorId"].toString() == "22222222222");
+    REQUIRE(rows[3].toObject()["decision"].toString() == "var");
+    REQUIRE(rows[3].toObject()["amount"].toObject()["cents"].toString() == "0");
+    REQUIRE(rows[4].toObject()["decision"].toString() == "var");
+    REQUIRE(rows[4].toObject()["amount"].toObject()["cents"].toString() == "-2550");
+
+    payload = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2")
+        .arg(server.port()).arg(return_id)));
+    REQUIRE(payload["summary"].toObject()["total"].toInt() == 5);
+    REQUIRE(payload["rows"].toArray()[0].toObject()["amount"].toObject()["cents"].toString() ==
+        QString::number(*core.rows[0].available_cents));
+}
+
+TEST_CASE("Web accounting return upload surfaces missing duplicate and invalid-cell blockers from core", "[integration][web][return]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+    QNetworkAccessManager network;
+
+    const auto missing = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 1, "99999999999"));
+    });
+    auto payload = upload_return(network, server.port(), missing);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() >= 2);
+    REQUIRE(payload["rows"].toArray()[0].toObject()["blockers"].toArray().first().toString().contains("muhasebe"));
+
+    const auto duplicate = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(6, 1, "11111111111"));
+        REQUIRE(book.write(6, 2, "DUPLICATE"));
+        REQUIRE(book.write(6, 4, 50.0));
+    });
+    payload = upload_return(network, server.port(), duplicate);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() >= 2);
+    REQUIRE(QJsonDocument(payload).toJson(QJsonDocument::Compact).contains("yinelenen"));
+
+    const auto invalid = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.currentWorksheet()->writeFormula(2, 4, QXlsx::CellFormula("1+1")));
+    });
+    payload = upload_return(network, server.port(), invalid);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() >= 2);
+    REQUIRE_FALSE(payload["rows"].toArray()[0].toObject()["blockers"].toArray().isEmpty());
+    REQUIRE_FALSE(QJsonDocument(payload).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+}
+
+TEST_CASE("Web accounting return API rejects malformed uploads and unknown return ids", "[integration][web][return]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+
+    QNetworkAccessManager network;
+    QNetworkRequest plain(QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns").arg(server.port())));
+    plain.setHeader(QNetworkRequest::ContentTypeHeader, "text/plain");
+    auto result = request(network, plain, "not an xlsx");
+    REQUIRE(result.status == 415);
+    auto payload = QJsonDocument::fromJson(result.body).object();
+    REQUIRE(payload["error"].toObject()["code"].toString() == "unsupported_media_type");
+    REQUIRE_FALSE(result.body.contains(temp.path().toUtf8()));
+
+    payload = upload_return(network, server.port(), "bad xlsx", 400);
+    REQUIRE(payload["error"].toObject()["code"].toString() == "return_import_failed");
+    REQUIRE_FALSE(QJsonDocument(payload).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+
+    payload = upload_return(network, server.port(), "bad xlsx", 400, "wrong");
+    REQUIRE(payload["error"].toObject()["code"].toString() == "missing_file");
+
+    payload = get_json(network,
+        QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/00000000-0000-0000-0000-000000000000")
+        .arg(server.port())), 404);
+    REQUIRE(payload["error"].toObject()["code"].toString() == "return_not_found");
 }
