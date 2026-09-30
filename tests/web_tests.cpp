@@ -103,7 +103,7 @@ TEST_CASE("Web ZIP import uses existing parser and serializes review rows", "[in
 
     QNetworkAccessManager network;
     QNetworkRequest upload(QUrl(QStringLiteral("http://127.0.0.1:%1/api/imports").arg(server.port())));
-    const auto boundary = QByteArray("----muz-web-test");
+    const auto boundary = QByteArray("----MuzWebTestBoundary");
     upload.setHeader(QNetworkRequest::ContentTypeHeader, "multipart/form-data; boundary=" + boundary);
     const auto archive = zip({{"a/content.pdf", pdf(content())}, {"a/envelope.pdf", pdf(envelope())}});
     QByteArray body = "--" + boundary +

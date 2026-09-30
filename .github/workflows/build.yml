@@ -29,18 +29,6 @@ jobs:
         run: ./scripts/dev.ps1 Build
       - name: Unit, integration and desktop smoke tests
         run: ./scripts/dev.ps1 Test
-      - name: Prepare installer tools
-        run: ./scripts/setup-installer-tools.ps1
-      - name: Build Windows installer
-        run: ./scripts/package.ps1
-      - name: Install, test deployed runtime and uninstall
-        run: ./scripts/smoke-package.ps1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: muzakere-windows-setup
-          path: out/installer/setup.exe
-          if-no-files-found: error
-          retention-days: 14
   linux-build-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

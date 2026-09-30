@@ -271,12 +271,13 @@ QByteArray WebServer::static_asset(const QString& path, QByteArray& content_type
 
 QByteArray WebServer::import_zip(const Request& request, int& status) const {
     try {
-        const auto type = lower(request.headers.value("content-type"));
+        const auto content_type = request.headers.value("content-type");
+        const auto type = lower(content_type);
         std::optional<QByteArray> upload;
         if (type.startsWith("application/zip") || type.startsWith("application/octet-stream"))
             upload = request.body;
         else if (type.startsWith("multipart/form-data"))
-            upload = multipart_file(request.body, type);
+            upload = multipart_file(request.body, content_type);
         else {
             status = 415;
             return json(error_body("unsupported_media_type", "ZIP upload expected."));
