@@ -11,6 +11,8 @@ inferred; `case_id` stays null until a later human review use case.
 
 ```text
 src/ui                 Qt Widgets, tables, async import, visible review problems
+src/web                Thin Qt Network HTTP adapter and embedded browser assets
+src/server_main.cpp    Headless web-server composition around the same Workspace
 src/application        ImportBatch + narrow repository/file/identity ports
 src/domain             C++20 value types and validation; no Qt or database
 src/infrastructure     Qt filesystem/hash, SQLite adapter, composition facade
@@ -88,7 +90,14 @@ work. Do not treat this first increment as production acceptance of those areas.
    and native Qt PDF generation for approved rows (or explicitly marked test data).
    Each output and rendered template has a recorded SHA-256 and publication state.
 
-Backend, web, KEP transmission, e-signature, browser automation, cloud, LLMs and
-OCR services remain outside MVP. No network calls exist in application code.
+MUZ-15 adds the first web adapter: `muzakere_server` serves a small browser UI,
+`GET /health`, and `POST /api/imports`. The upload endpoint writes the received
+ZIP to temporary storage, then calls `LocalWorkspace::import_archive` and
+`prepare_accounting`; review rows are serialized to JSON with the same
+green/yellow/red semantics as the desktop. HTTP handlers do not contain parser,
+validation or debtor matching rules.
+
+KEP transmission, e-signature, browser automation, cloud-specific storage, LLMs
+and OCR services remain outside MVP. The desktop application remains supported.
 Expected I/O errors become per-file review issues; infrastructure failures abort
 the use case. RAII controls transactions, file handles, connections and UI jobs.

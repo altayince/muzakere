@@ -6,7 +6,7 @@ libraries need only the C++ standard library.
 
 | Component | Decision and maintenance | License / alternative |
 | --- | --- | --- |
-| Qt Core, Widgets, Concurrent, SQL | Mature, actively maintained Qt 6 APIs; one package supplies UI, worker pool, SHA-256, MIME and SQLite adapter. Native Windows toolchain pins Qt 6.8.3 / MinGW 13.1; minimum Qt 6.4 also tested on Linux. Pin is a reproducibility baseline, not a claim of latest security patch. | LGPLv3 or commercial; use shared Qt. Alternative: wxWidgets plus separate hashing/SQL dependencies. |
+| Qt Core, Gui, Widgets, Concurrent, SQL, Network | Mature, actively maintained Qt 6 APIs; one package supplies UI, worker pool, SHA-256, MIME, SQLite adapter and the first thin HTTP server. Native Windows toolchain pins Qt 6.8.3 / MinGW 13.1; minimum Qt 6.4 also tested on Linux. Pin is a reproducibility baseline, not a claim of latest security patch. | LGPLv3 or commercial; use shared Qt. Alternative: wxWidgets or a separate HTTP stack plus separate hashing/SQL dependencies. |
 | SQLite via Qt QSQLITE | Local transactional store without another wrapper or ORM. SQLite ships with the selected Qt driver. | SQLite public domain; Qt SQL LGPLv3/commercial. Alternative: direct sqlite3 C API, if independent SQLite patch cadence becomes necessary. |
 | Catch2 3.8.1 | Test-only pinned dependency; maintained project. Downloaded on initial CMake configure, cached for later builds. | BSL-1.0; alternative GoogleTest BSD-3-Clause. |
 | Logging | Error codes/internal UUIDs and SQLite audit now; no document-body logging. | No extra dependency. Consider spdlog (MIT) only when rotation/sinks become needed. |
