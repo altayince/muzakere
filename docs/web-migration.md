@@ -68,9 +68,17 @@ Implemented in MUZ-15:
 - server and upload integration tests
 - Docker build and smoke test
 
+Implemented in MUZ-19:
+
+- persisted review-state fetch endpoint
+- browser editing for the desktop review fields
+- save endpoint that keeps approval separate
+- explicit approval endpoint for eligible rows
+- UI indicators for unsaved, saved, approved, warnings and blockers
+- regression tests for persistence, approval and invalid API payloads
+
 Not implemented yet:
 
-- browser-side editing and explicit approval
 - HAMDATA/MUHASEBE download
 - accounting return import
 - VAR/YOK PDF generation and download

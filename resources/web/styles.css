@@ -88,10 +88,16 @@ label {
   font-weight: 700;
 }
 
-.upload-row {
+.upload-row,
+.review-actions {
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.review-actions {
+  flex-wrap: wrap;
+  margin-top: 12px;
 }
 
 input[type=file] {
@@ -126,7 +132,7 @@ button:disabled {
 
 .summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   margin: 16px 0;
   overflow: hidden;
 }
@@ -169,11 +175,34 @@ th {
 tr.ready { background: var(--green); }
 tr.review { background: var(--yellow); }
 tr.blocked { background: var(--red); }
+tr.dirty { outline: 2px solid var(--blue); outline-offset: -2px; }
 .badge { font-weight: 700; }
 .ready .badge { color: var(--green-ink); }
 .review .badge { color: var(--yellow-ink); }
 .blocked .badge { color: var(--red-ink); }
+.approval { white-space: nowrap; color: var(--muted); font-size: 12px; }
 .empty td { color: var(--muted); text-align: center; padding: 32px; }
+
+td input,
+td select {
+  width: 100%;
+  min-width: 120px;
+  border: 1px solid #b8c2d0;
+  border-radius: 4px;
+  padding: 7px;
+  background: #fff;
+  color: var(--ink);
+}
+
+td input[type=checkbox] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+}
+
+.issues {
+  min-width: 220px;
+}
 
 @media (max-width: 760px) {
   .topbar {

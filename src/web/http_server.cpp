@@ -10,7 +10,9 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <algorithm>
 #include <optional>
+#include <set>
 
 extern int qInitResources_web();
 
@@ -165,6 +167,61 @@ std::optional<QByteArray> multipart_file(const QByteArray& body, const QByteArra
     }
     return {};
 }
+
+QJsonObject review_json(const ProcessingBatch& batch, const std::vector<AccountingRow>& rows) {
+    QJsonArray row_items;
+    int ready = 0, review = 0, blocked = 0, approved = 0;
+    for (const auto& row : rows) {
+        const auto state = review_status(row);
+        if (state == ReviewStatus::ready) ++ready;
+        else if (state == ReviewStatus::review) ++review;
+        else ++blocked;
+        if (row.approved) ++approved;
+        row_items.append(row_json(row));
+    }
+    return {
+        {"batch", QJsonObject{
+            {"id", text(batch.id)},
+            {"status", text(batch.status)},
+            {"importedCount", static_cast<int>(batch.imported_count)},
+            {"duplicateCount", static_cast<int>(batch.duplicate_count)},
+            {"issueCount", static_cast<int>(batch.issue_count)}
+        }},
+        {"summary", QJsonObject{
+            {"ready", ready},
+            {"review", review},
+            {"blocked", blocked},
+            {"approved", approved},
+            {"total", row_items.size()}
+        }},
+        {"rows", row_items}
+    };
+}
+
+std::optional<QJsonObject> parse_json_object(const QByteArray& body) {
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(body, &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) return {};
+    return document.object();
+}
+
+bool cells_from_json(const QJsonObject& object, std::array<std::string, column_count>& cells) {
+    const std::array<const char*, column_count> keys{"serviceDate", "office", "caseNumber", "amount", "debtor",
+        "debtorId", "creditor", "iban", "firstNotice", "notes"};
+    const auto values = object.value("cells");
+    if (!values.isObject()) return false;
+    const auto cell_object = values.toObject();
+    for (std::size_t index = 0; index < keys.size(); ++index) {
+        const auto value = cell_object.value(keys[index]);
+        if (!value.isString()) return false;
+        cells[index] = value.toString().toStdString();
+    }
+    return true;
+}
+
+QStringList path_segments(const QString& path) {
+    return path.split('/', Qt::SkipEmptyParts);
+}
 } // namespace
 
 struct WebServer::Request {
@@ -228,6 +285,31 @@ void WebServer::read_socket(QTcpSocket* socket, const std::shared_ptr<QByteArray
 void WebServer::handle(QTcpSocket* socket, const Request& request) {
     if (request.method == "GET" && request.path == "/health") {
         respond(socket, 200, json({{"status", "ok"}, {"service", "muzakere_server"}}));
+        return;
+    }
+    const auto segments = path_segments(request.path);
+    if (segments.size() == 3 && segments[0] == "api" && segments[1] == "batches" && segments[2].size() == 36 &&
+        request.method == "GET") {
+        int status = 200;
+        respond(socket, status, review_state(segments[2], status));
+        return;
+    }
+    if (segments.size() == 4 && segments[0] == "api" && segments[1] == "batches" && segments[3] == "review") {
+        int status = 200;
+        if (request.method == "GET") respond(socket, status, review_state(segments[2], status));
+        else respond(socket, 405, json(error_body("method_not_allowed", "Method is not supported.")));
+        return;
+    }
+    if (segments.size() == 5 && segments[0] == "api" && segments[1] == "batches" && segments[3] == "review" &&
+        segments[4] == "save" && request.method == "POST") {
+        int status = 200;
+        respond(socket, status, save_review(segments[2], request, status));
+        return;
+    }
+    if (segments.size() == 5 && segments[0] == "api" && segments[1] == "batches" && segments[3] == "review" &&
+        segments[4] == "approve" && request.method == "POST") {
+        int status = 200;
+        respond(socket, status, approve_review(segments[2], request, status));
         return;
     }
     if (request.method == "POST" && request.path == "/api/imports") {
@@ -295,35 +377,124 @@ QByteArray WebServer::import_zip(const Request& request, int& status) const {
         file.close();
         const auto imported = workspace_.import_archive(std::filesystem::path(upload_path.toStdString()));
         const auto rows = workspace_.prepare_accounting(imported.batch.id);
-        QJsonArray row_items;
-        int ready = 0, review = 0, blocked = 0;
-        for (const auto& row : rows) {
-            const auto state = review_status(row);
-            if (state == ReviewStatus::ready) ++ready;
-            else if (state == ReviewStatus::review) ++review;
-            else ++blocked;
-            row_items.append(row_json(row));
-        }
         QJsonArray issues;
         for (const auto& issue : imported.issues)
             issues.append(QJsonObject{{"code", text(issue.code)}, {"source", text(issue.source_path)}});
+        auto body = review_json(imported.batch, rows);
+        body.insert("issues", issues);
+        auto batch = body["batch"].toObject();
+        batch.insert("archiveName", text(imported.archive_name));
+        body["batch"] = batch;
         status = 201;
-        return json({
-            {"batch", QJsonObject{
-                {"id", text(imported.batch.id)},
-                {"status", text(imported.batch.status)},
-                {"importedCount", static_cast<int>(imported.batch.imported_count)},
-                {"duplicateCount", static_cast<int>(imported.batch.duplicate_count)},
-                {"issueCount", static_cast<int>(imported.batch.issue_count)},
-                {"archiveName", text(imported.archive_name)}
-            }},
-            {"summary", QJsonObject{{"ready", ready}, {"review", review}, {"blocked", blocked}, {"total", row_items.size()}}},
-            {"rows", row_items},
-            {"issues", issues}
-        });
+        return json(body);
     } catch (const Error& error) {
         status = error.code() == ErrorCode::invalid_input ? 400 : 500;
         return json(error_body("import_failed", "ZIP could not be imported or reviewed."));
+    }
+}
+
+QByteArray WebServer::review_state(const QString& batch_id, int& status) const {
+    try {
+        const auto id = batch_id.toStdString();
+        const auto batches = workspace_.batches();
+        const auto batch = std::find_if(batches.begin(), batches.end(), [&](const auto& item) { return item.id == id; });
+        if (batch == batches.end()) {
+            status = 404;
+            return json(error_body("batch_not_found", "Batch was not found."));
+        }
+        return json(review_json(*batch, workspace_.accounting_rows(id)));
+    } catch (const Error&) {
+        status = 500;
+        return json(error_body("review_failed", "Review state could not be loaded."));
+    }
+}
+
+QByteArray WebServer::save_review(const QString& batch_id, const Request& request, int& status) const {
+    try {
+        const auto payload = parse_json_object(request.body);
+        if (!payload || !payload->value("rows").isArray()) {
+            status = 400;
+            return json(error_body("bad_payload", "Rows array is required."));
+        }
+        const auto id = batch_id.toStdString();
+        const auto current = workspace_.accounting_rows(id);
+        std::vector<AccountingRow> edits;
+        std::set<std::string> seen;
+        for (const auto& value : payload->value("rows").toArray()) {
+            if (!value.isObject()) {
+                status = 400;
+                return json(error_body("bad_payload", "Each row edit must be an object."));
+            }
+            const auto object = value.toObject();
+            const auto row_id = object.value("id").toString().toStdString();
+            if (row_id.empty() || !seen.insert(row_id).second) {
+                status = 400;
+                return json(error_body("bad_row_id", "Row id is missing or duplicated."));
+            }
+            const auto found = std::find_if(current.begin(), current.end(), [&](const auto& row) { return row.id == row_id; });
+            if (found == current.end()) {
+                status = 404;
+                return json(error_body("row_not_found", "Review row was not found."));
+            }
+            auto edit = *found;
+            if (!cells_from_json(object, edit.cells)) {
+                status = 400;
+                return json(error_body("bad_payload", "Editable cells are incomplete."));
+            }
+            edit.approved = false;
+            edits.push_back(std::move(edit));
+        }
+        if (edits.empty()) {
+            status = 400;
+            return json(error_body("bad_payload", "At least one row is required."));
+        }
+        workspace_.review_accounting(id, edits);
+        return review_state(batch_id, status);
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("save_failed", "Rows could not be saved."));
+    }
+}
+
+QByteArray WebServer::approve_review(const QString& batch_id, const Request& request, int& status) const {
+    try {
+        const auto payload = parse_json_object(request.body);
+        if (!payload || !payload->value("rowIds").isArray()) {
+            status = 400;
+            return json(error_body("bad_payload", "rowIds array is required."));
+        }
+        const auto id = batch_id.toStdString();
+        const auto current = workspace_.accounting_rows(id);
+        std::vector<AccountingRow> approvals;
+        std::set<std::string> seen;
+        for (const auto& value : payload->value("rowIds").toArray()) {
+            if (!value.isString()) {
+                status = 400;
+                return json(error_body("bad_row_id", "Row id must be a string."));
+            }
+            const auto row_id = value.toString().toStdString();
+            if (row_id.empty() || !seen.insert(row_id).second) {
+                status = 400;
+                return json(error_body("bad_row_id", "Row id is missing or duplicated."));
+            }
+            const auto found = std::find_if(current.begin(), current.end(), [&](const auto& row) { return row.id == row_id; });
+            if (found == current.end()) {
+                status = 404;
+                return json(error_body("row_not_found", "Review row was not found."));
+            }
+            auto approval = *found;
+            approval.approved = true;
+            approvals.push_back(std::move(approval));
+        }
+        if (approvals.empty()) {
+            status = 400;
+            return json(error_body("bad_payload", "At least one row id is required."));
+        }
+        workspace_.review_accounting(id, approvals);
+        return review_state(batch_id, status);
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("approval_failed", "Rows could not be approved."));
     }
 }
 

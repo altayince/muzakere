@@ -154,7 +154,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-15 — Web ZIP inceleme dilimi\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-19 — Web review düzenleme ve onay\n"
+        "Tarayıcı review satırlarını yeniden alabilir, alanları düzenleyip kaydedebilir ve uygun satırları ayrıca onaylayabilir.\n\n"
+        "MUZ-15 — Web ZIP inceleme dilimi\n"
         "Tarayıcıdan ZIP yükleme, C++ backend import/parser akışı ve renkli review satırları için ilk web server eklendi.\n\n"
         "MUZ-13 — Gerçek HAMDATA / MUHASEBE düzeni\n"
         "Muhasebe T.C./vergi numarasıyla tekilleşir; dönen tutar borçlunun tüm dosyalarına bağlanır. Rastgele dönüş düğmesi kaldırıldı.\n\n"

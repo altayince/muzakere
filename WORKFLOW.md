@@ -3,9 +3,11 @@
 Work starts with an issue assigned to `altayince` and added to the private **MUZ**
 Project. Branch from updated `main` using `feature/MUZ-<issue>-description` or
 `bugfix/MUZ-<issue>-description`. Develop and test on that branch, open a PR,
-assign it to `altayince`, and add the PR to MUZ too. Review and merge only after
-checks pass. Never push feature work directly to main. The initial empty-repo
-bootstrap is the sole exception.
+assign it to `altayince`, and add the PR to MUZ too. For Codex-driven feature
+turns, stop after pushing/opening the PR; do not spend the turn waiting on GitHub
+CI or merging unless the user explicitly asks for that follow-up. Failed checks
+are handled when the user reports them or asks to continue. Never push feature
+work directly to main. The initial empty-repo bootstrap is the sole exception.
 
 The GLA controls are retained: `validate-branch` verifies naming and issue
 existence; `validate-ownership` verifies assignee and Project membership; a merge
