@@ -133,6 +133,22 @@ Implemented in MUZ-29:
 - workbook generation starts the Excel download directly and retains a retry link
 - response preview, profile, selection, PDF generation and per-file download actions live in stage 2
 
+Workbook creation returns HTTP 201; the browser downloads the resulting opaque
+URL. Where supported, clicking an Excel/PDF download opens the native Save As
+picker before awaiting network operations. Otherwise the browser's normal
+download preferences apply. Canceling the picker does not start a workbook export.
+PDF generation lists the resulting files; each **PDF indir** action saves that PDF.
+
+While an accounting upload is pending, old rows are retained but reload, selection,
+preview and PDF generation are disabled. A failed upload restores those actions
+without losing the previous return or selection. Late preview/reload responses
+from the previous flow are ignored.
+
+The standalone HTTP executable initializes `QGuiApplication` with the offscreen
+platform by default, since core PDF rendering requires Qt's font infrastructure.
+A subprocess regression exercises Excel and PDF downloads through the actual
+server executable, rather than relying only on tests hosted by `QApplication`.
+
 Browser interaction/layout regressions can be run with Python Playwright and Chromium:
 install with `python -m pip install playwright` and `python -m playwright install chromium`,
 then run `python tests/web_ui_test.py`. This uses synthetic API responses and local assets;

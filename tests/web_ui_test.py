@@ -57,6 +57,12 @@ def run():
     calls = []
     errors = []
     fail_export = False
+    held_returns = []
+    hold_return = False
+    held_previews = []
+    hold_preview = False
+    held_reloads = []
+    hold_reload = False
 
     def review_payload():
         return dict(batch={"id": "batch-1", "importedCount": 3}, rows=review_rows,
@@ -86,11 +92,15 @@ def run():
             if fail_export:
                 status, payload = 400, {"error": {"message": "Sentetik dışa aktarma hatası"}}
             else:
+                status = 201
                 payload = dict(filename="hamdata.xlsx", downloadUrl="/api/exports/opaque/download")
         elif path == "/api/exports/opaque/download":
             route.continue_()
             return
         elif path.endswith("/preview"):
+            if hold_preview:
+                held_previews.append(route)
+                return
             payload = {"html": "<p>" + body["profile"]["lawyer"] + "</p>"}
         elif path.endswith("/response-exports"):
             status = 201
@@ -99,6 +109,12 @@ def run():
             route.continue_()
             return
         elif path.startswith("/api/accounting-returns"):
+            if hold_return and route.request.method == "POST":
+                held_returns.append(route)
+                return
+            if hold_reload and route.request.method == "GET":
+                held_reloads.append(route)
+                return
             payload = {"return": {"id": "return-1"}, "rows": return_rows,
                        "summary": dict(total=3, var=1, yok=1, review=1, blocked=1)}
         else:
@@ -110,6 +126,7 @@ def run():
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 1000}, reduced_motion="reduce")
         page.on("pageerror", lambda error: errors.append(str(error)))
+        page.add_init_script("window.showSaveFilePicker = undefined;")
         page.route("**/*", route_request)
         page.goto(f"http://127.0.0.1:{server.server_port}/")
         expect(page.locator(".stage")).to_have_count(2)
@@ -171,6 +188,65 @@ def run():
             page.get_by_role("link", name="cevap.pdf PDF indir").click()
         assert download.value.suggested_filename == "cevap.pdf"
         assert Path(download.value.path()).read_bytes() == b"%PDF-synthetic"
+
+        # Native-save branch: picker is called in the user gesture, before the
+        # API work; the downloaded bytes are written and the file is closed.
+        fail_export = False
+        page.evaluate("""() => {
+          window.savedFiles = [];
+          window.showSaveFilePicker = async options => {
+            const record = { name: options.suggestedName, activation: navigator.userActivation.isActive };
+            savedFiles.push(record);
+            return { createWritable: async () => ({
+              write: async blob => { record.text = await blob.text(); },
+              close: async () => { record.closed = true; }, abort: async () => {}
+            }) };
+          };
+        }""")
+        for button in ["#exportHamdata", "#exportHamdataAccounting"]:
+            page.locator(button).click()
+            expect(page.locator("#message")).to_have_text("hamdata.xlsx kaydedildi.")
+        page.get_by_role("link", name="cevap.pdf PDF indir").click()
+        expect(page.locator("#returnMessage")).to_have_text("cevap.pdf kaydedildi.")
+        saved_files = page.evaluate("savedFiles")
+        assert [item["name"] for item in saved_files] == ["HAMDATA.xlsx", "HAMDATA-MUHASEBE.xlsx", "cevap.pdf"]
+        assert all(item["activation"] and item["closed"] for item in saved_files)
+        assert saved_files[0]["text"] == "synthetic workbook download"
+        assert saved_files[2]["text"] == "%PDF-synthetic"
+        before_cancel = len(calls)
+        page.evaluate("() => { window.showSaveFilePicker = async () => { throw new DOMException('cancel', 'AbortError'); }; }")
+        page.locator("#exportHamdata").click()
+        expect(page.locator("#message")).to_have_text("Kaydetme iptal edildi.")
+        assert len(calls) == before_cancel
+        expect(page.locator("#exportHamdata")).to_be_enabled()
+
+        # Hold a new upload pending: old rows remain but actions must not run.
+        # Also deliver old preview/reload results late, after the new flow began.
+        hold_preview = True
+        page.locator('[data-role="preview-response"][data-row-id="response-0"]').click()
+        expect(page.locator("#responsePreviewStatus")).to_have_text("Önizleme hazırlanıyor...")
+        hold_reload = True
+        page.locator("#reloadReturn").click()
+        expect(page.locator("#returnMessage")).to_have_text("Muhasebe dönüşü yenileniyor...")
+        hold_return = True
+        page.locator("#returnForm button").click()
+        expect(page.locator("#returnMessage")).to_have_text("Muhasebe dönüşü işleniyor...")
+        for selector in ["#reloadReturn", "#selectValidResponses", "#previewSelectedResponse", "#generateResponses",
+                         '[data-role="preview-response"][data-row-id="response-0"]']:
+            expect(page.locator(selector)).to_be_disabled()
+        expect(page.locator('#returnRows input[value="response-0"]')).to_be_disabled()
+        assert len(held_returns) == len(held_previews) == len(held_reloads) == 1
+        held_previews.pop().fulfill(json={"html": "<p>stale preview</p>"})
+        held_reloads.pop().fulfill(json={"rows": [], "summary": {"total": 999}})
+        expect(page.locator("#responsePreviewPanel")).to_be_hidden()
+        expect(page.locator("#returnTotal")).to_have_text("3")
+        held_returns.pop().fulfill(status=400, json={"error": {"message": "Sentetik yükleme hatası"}})
+        expect(page.locator("#returnMessage")).to_have_text("Sentetik yükleme hatası")
+        expect(page.locator("#returnRows input:checked")).to_have_count(2)
+        expect(page.locator("#generateResponses")).to_be_enabled()
+        expect(page.locator("#reloadReturn")).to_be_enabled()
+        expect(page.locator('#returnRows input[value="response-2"]')).to_be_disabled()
+        hold_return = hold_preview = hold_reload = False
 
         for width in [1440, 1024, 768, 390, 320]:
             page.set_viewport_size({"width": width, "height": 1000})

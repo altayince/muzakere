@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <QBuffer>
+#include <QCoreApplication>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -16,6 +17,10 @@
 #include <QPdfWriter>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QElapsedTimer>
+#include <QRegularExpression>
 #include <QUuid>
 #include <xlsxcellformula.h>
 #include <xlsxdocument.h>
@@ -210,6 +215,77 @@ QJsonObject upload_return(QNetworkAccessManager& network, quint16 port, const QB
 }
 } // namespace
 
+TEST_CASE("Standalone headless server exports workbooks and generates downloadable PDFs", "[integration][web][response][server-process]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    struct ChildServer {
+        QProcess process;
+        ~ChildServer() {
+            process.kill();
+            process.waitForFinished(5000);
+        }
+    } child;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove("QT_QPA_PLATFORM"); // Exercise the executable's headless default.
+    environment.remove("DISPLAY");
+    environment.remove("WAYLAND_DISPLAY");
+    environment.insert("QT_FORCE_STDERR_LOGGING", "1");
+    child.process.setProcessEnvironment(environment);
+    child.process.setProcessChannelMode(QProcess::MergedChannels);
+    auto executable = QCoreApplication::applicationDirPath() + "/muzakere_server";
+#ifdef Q_OS_WIN
+    executable += ".exe";
+#endif
+    child.process.start(executable, {"--workspace", temp.path() + "/workspace", "--port", "0"});
+    REQUIRE(child.process.waitForStarted(5000));
+    QByteArray output;
+    QElapsedTimer timer;
+    timer.start();
+    QRegularExpressionMatch match;
+    while (timer.elapsed() < 10000) {
+        child.process.waitForReadyRead(100);
+        output += child.process.readAll();
+        match = QRegularExpression("Muzakere HTTP port: (\\d+)").match(QString::fromUtf8(output));
+        if (match.hasMatch() || child.process.state() == QProcess::NotRunning) break;
+    }
+    INFO(output.constData());
+    REQUIRE(match.hasMatch());
+    const auto port = match.captured(1).toUShort();
+    const auto base = QStringLiteral("http://127.0.0.1:%1").arg(port);
+    QNetworkAccessManager network;
+    const auto batch = upload_review(network, port)["batch"].toObject()["id"].toString();
+    for (const auto* kind : {"hamdata", "hamdata-with-accounting"}) {
+        const auto result = post_json(network, QUrl(base + "/api/batches/" + batch + "/exports/" + kind), {}, 201);
+        const auto download = request(network, QNetworkRequest(QUrl(base + result["downloadUrl"].toString())));
+        REQUIRE(download.status == 200);
+        REQUIRE(download.body.startsWith("PK"));
+        REQUIRE(download.content_disposition.contains("attachment"));
+    }
+    const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 4, 123.45));
+    });
+    const auto imported = upload_return(network, port, workbook);
+    QJsonArray ids;
+    for (const auto& row : imported["rows"].toArray()) ids.append(row.toObject()["id"]);
+    const auto return_id = imported["return"].toObject()["id"].toString();
+    const auto exported = post_json(network, QUrl(base + "/api/accounting-returns/" + return_id + "/response-exports"),
+        {{"rowIds", ids}, {"profile", QJsonObject{{"lawyer", "Av. TEST"}, {"address", "TEST ADRES"}}}}, 201);
+    REQUIRE(exported["files"].toArray().size() == ids.size());
+    for (const auto& file : exported["files"].toArray()) {
+        const auto downloaded = request(network, QNetworkRequest(QUrl(base + file.toObject()["downloadUrl"].toString())));
+        REQUIRE(downloaded.status == 200);
+        REQUIRE(downloaded.body.startsWith("%PDF-"));
+        REQUIRE(downloaded.content_type == "application/pdf");
+        const auto text = muz::extract_pdf(downloaded.body);
+        REQUIRE(text.error.empty());
+        REQUIRE(text.text.contains("TEST MUHATAP"));
+        REQUIRE(text.text.contains("Av. TEST"));
+        REQUIRE(text.text.contains("2026/"));
+    }
+    REQUIRE(get_json(network, QUrl(base + "/health"))["status"].toString() == "ok");
+}
+
 TEST_CASE("Web server starts and answers health and static UI", "[integration][web]") {
     QTemporaryDir temp;
     REQUIRE(temp.isValid());
@@ -239,7 +315,7 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(script.status == 200);
     REQUIRE(script.body.contains("decision-blocked"));
     REQUIRE(script.body.contains("showResponseDownloads"));
-    REQUIRE(script.body.contains("downloadWorkbook.click()"));
+    REQUIRE(script.body.contains("saveDownload(payload.downloadUrl, payload.filename, handle)"));
     REQUIRE(script.body.contains("rowDetails"));
     REQUIRE(script.body.contains("aria-expanded"));
     REQUIRE(script.body.contains("previewResponse"));

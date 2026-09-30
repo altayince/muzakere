@@ -37,6 +37,8 @@ let currentReturnRows = [];
 let currentPreviewRowId = "";
 let workbookBusy = false;
 let responsesBusy = false;
+let returnBusy = false;
+let returnGeneration = 0;
 const dirtyRows = new Set();
 
 const labels = {
@@ -78,6 +80,63 @@ function showDownload(payload) {
   downloadPanel.hidden = false;
 }
 
+// Invoke the picker during the click gesture, before generation/network awaits.
+// Browsers without File System Access keep their normal download behavior.
+async function chooseSaveFile(filename) {
+  if (!window.showSaveFilePicker) return null;
+  const pdf = filename.toLowerCase().endsWith(".pdf");
+  return window.showSaveFilePicker({
+    suggestedName: filename,
+    types: [{ description: pdf ? "PDF belgesi" : "Excel çalışma kitabı",
+      accept: pdf ? { "application/pdf": [".pdf"] }
+        : { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }]
+  });
+}
+
+async function saveDownload(url, filename, handle) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error?.message || "Dosya indirilemedi. Tekrar deneyin.");
+  }
+  const blob = await response.blob();
+  if (handle) {
+    const writer = await handle.createWritable();
+    try {
+      await writer.write(blob);
+      await writer.close();
+    } catch (error) {
+      await writer.abort().catch(() => {});
+      throw error;
+    }
+  } else {
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  }
+}
+
+async function downloadFile(url, filename, status) {
+  try {
+    const handle = await chooseSaveFile(filename);
+    status.textContent = `${filename} indiriliyor...`;
+    await saveDownload(url, filename, handle);
+    status.textContent = handle ? `${filename} kaydedildi.` : `${filename} tarayıcı indirmelerine gönderildi.`;
+  } catch (error) {
+    status.textContent = error.name === "AbortError" ? "Kaydetme iptal edildi." : error.message;
+  }
+}
+
+downloadWorkbook.addEventListener("click", (event) => {
+  event.preventDefault();
+  downloadFile(downloadWorkbook.href, downloadWorkbook.download, message);
+});
+
 function clearResponseDownloads() {
   responseDownloadPanel.hidden = true;
   responseDownloadLabel.textContent = "";
@@ -94,6 +153,7 @@ function clearResponsePreview(statusText = "") {
 }
 
 function resetReturnWorkflow(statusText = "") {
+  ++returnGeneration;
   currentReturnId = "";
   currentReturnRows = [];
   setReturnSummary();
@@ -118,6 +178,10 @@ function showResponseDownloads(payload) {
     link.className = "download-link";
     link.textContent = "PDF indir";
     link.setAttribute("aria-label", `${file.filename} PDF indir`);
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      downloadFile(file.downloadUrl, file.filename, returnMessage);
+    });
     item.append(name, link);
     responseDownloads.append(item);
   }
@@ -280,10 +344,18 @@ function updateButtons() {
   approveButton.disabled = !hasBatch || selectedIds().length === 0;
   exportHamdataButton.disabled = !hasBatch || hasDirty || workbookBusy;
   exportHamdataAccountingButton.disabled = !hasBatch || hasDirty || workbookBusy;
-  reloadReturnButton.disabled = !currentReturnId;
-  selectValidResponsesButton.disabled = !currentReturnId || !hasValidResponse;
-  previewSelectedResponseButton.disabled = !currentReturnId || selectedResponses.length !== 1;
-  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile || responsesBusy;
+  reloadReturnButton.disabled = !currentReturnId || returnBusy || responsesBusy;
+  selectValidResponsesButton.disabled = !currentReturnId || !hasValidResponse || returnBusy || responsesBusy;
+  previewSelectedResponseButton.disabled = !currentReturnId || selectedResponses.length !== 1 || returnBusy || responsesBusy;
+  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile || responsesBusy || returnBusy;
+  returnForm.querySelector("button").disabled = returnBusy || responsesBusy;
+  for (const item of currentReturnRows) {
+    const row = returnRows.querySelector(`tr[data-row-id="${CSS.escape(item.id)}"]`);
+    if (!row) continue;
+    for (const action of row.querySelectorAll("input, [data-role=preview-response]")) {
+      action.disabled = item.status === "blocked" || returnBusy || responsesBusy;
+    }
+  }
   document.querySelector("#responseSelectionStatus").textContent = selectedResponses.length
     ? `${selectedResponses.length} dosya seçili.${hasProfile ? " PDF oluşturmaya hazır." : " Vekil adı ve adresini girin."}`
     : "PDF oluşturmak için uygun satırları seçin ve vekil bilgilerini girin.";
@@ -414,10 +486,12 @@ function renderReturnRows(rows) {
 }
 
 async function loadReturn() {
-  if (!currentReturnId) return;
+  if (!currentReturnId || returnBusy || responsesBusy) return;
+  const generation = returnGeneration;
   returnMessage.textContent = "Muhasebe dönüşü yenileniyor...";
   const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}`);
   const payload = await response.json();
+  if (generation !== returnGeneration) return;
   if (!response.ok) throw new Error(payload.error?.message || "Muhasebe dönüşü alınamadı.");
   setReturnSummary(payload.summary);
   renderReturnRows(payload.rows || []);
@@ -458,10 +532,16 @@ async function generateWorkbook(kind) {
   clearDownload();
   message.textContent = "Excel hazırlanıyor...";
   try {
-    const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`);
+    const filename = kind === "hamdata" ? "HAMDATA.xlsx" : "HAMDATA-MUHASEBE.xlsx";
+    const handle = await chooseSaveFile(filename);
+    const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`, {}, 201);
     showDownload(payload);
-    downloadWorkbook.click();
-    message.textContent = `${payload.filename} hazır. İndirme başlamazsa “Excel'i tekrar indir” bağlantısını kullanın.`;
+    await saveDownload(payload.downloadUrl, payload.filename, handle);
+    message.textContent = handle ? `${payload.filename} kaydedildi.`
+      : `${payload.filename} tarayıcı indirmelerine gönderildi. Gerekirse “Excel'i tekrar indir” bağlantısını kullanın.`;
+  } catch (error) {
+    if (error.name !== "AbortError") throw error;
+    message.textContent = "Kaydetme iptal edildi.";
   } finally {
     workbookBusy = false;
     updateButtons();
@@ -548,10 +628,12 @@ exportHamdataAccountingButton.addEventListener("click", async () => {
 
 returnForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (returnBusy || responsesBusy) return;
   const [file] = returnFileInput.files;
   if (!file) return;
-  const button = returnForm.querySelector("button");
-  button.disabled = true;
+  returnBusy = true;
+  const generation = ++returnGeneration;
+  updateButtons();
   clearResponseDownloads();
   clearResponsePreview();
   returnMessage.textContent = "Muhasebe dönüşü işleniyor...";
@@ -560,6 +642,7 @@ returnForm.addEventListener("submit", async (event) => {
     body.append("file", file);
     const response = await fetch("/api/accounting-returns", { method: "POST", body });
     const payload = await response.json();
+    if (generation !== returnGeneration) return;
     if (!response.ok) throw new Error(payload.error?.message || "Muhasebe dönüşü içe aktarılamadı.");
     currentReturnId = payload.return.id;
     setReturnSummary(payload.summary);
@@ -569,17 +652,19 @@ returnForm.addEventListener("submit", async (event) => {
     returnMessage.textContent = `${payload.summary.total} satır incelendi. PDF oluşturmak için uygun satırları seçin.`;
     updateButtons();
   } catch (error) {
-    returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.message;
   } finally {
-    button.disabled = false;
+    returnBusy = false;
+    updateButtons();
   }
 });
 
 reloadReturnButton.addEventListener("click", async () => {
+  const generation = returnGeneration;
   try {
     await loadReturn();
   } catch (error) {
-    returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.message;
   }
 });
 
@@ -594,6 +679,8 @@ async function loadResponseProfile() {
 }
 
 async function previewResponse(rowId) {
+  if (returnBusy || responsesBusy) return;
+  const generation = returnGeneration;
   const row = responseRowById(rowId);
   if (!currentReturnId || !row || row.status === "blocked") {
     clearResponsePreview("Bu satır önizlenemez.");
@@ -619,10 +706,12 @@ async function previewResponse(rowId) {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error?.message || "Önizleme alınamadı.");
     if (currentPreviewRowId !== rowId) return;
+    if (generation !== returnGeneration) return;
     responsePreviewFrame.srcdoc = payload.html || "";
     responsePreviewStatus.textContent = "Önizleme güncel.";
   } catch (error) {
     if (currentPreviewRowId !== rowId) return;
+    if (generation !== returnGeneration) return;
     responsePreviewFrame.removeAttribute("srcdoc");
     responsePreviewStatus.textContent = error.message;
   } finally {
@@ -643,6 +732,7 @@ async function saveResponseProfile() {
 }
 
 selectValidResponsesButton.addEventListener("click", () => {
+  if (returnBusy || responsesBusy) return;
   for (const input of returnRows.querySelectorAll("input[data-role=select-response]")) {
     input.checked = !input.disabled;
   }
@@ -683,6 +773,7 @@ if (returnForm) {
 generateResponsesButton.addEventListener("click", async () => {
   if (generateResponsesButton.disabled) return;
   responsesBusy = true;
+  const generation = returnGeneration;
   updateButtons();
   returnMessage.textContent = "Cevap PDF'leri hazırlanıyor...";
   try {
@@ -695,11 +786,12 @@ generateResponsesButton.addEventListener("click", async () => {
         address: responseAddress.value
       }
     }, 201);
+    if (generation !== returnGeneration) return;
     showResponseDownloads(payload);
     responseDownloadPanel.scrollIntoView({ block: "nearest" });
-    returnMessage.textContent = `${(payload.files || []).length} PDF oluşturuldu.`;
+    returnMessage.textContent = `${(payload.files || []).length} PDF hazır. Aşağıdaki “PDF indir” düğmeleriyle kaydedin.`;
   } catch (error) {
-    returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.message;
   } finally {
     responsesBusy = false;
     updateButtons();

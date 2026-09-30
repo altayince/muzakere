@@ -113,6 +113,9 @@ Open `http://127.0.0.1:8080/` to run the two-stage web workflow:
 Both lists use compact tables with expandable details and scrolling contained
 inside the table on smaller screens. Preview and PDF generation use the current
 lawyer/address form values; saving the profile remains a separate action.
+Excel/PDF download actions offer file name/location selection where the browser
+supports Save As, otherwise they use the browser's download preferences. After
+PDF generation, use the individual **PDF indir** buttons to save the files.
 
 The web server remains a thin adapter over the C++ workspace/domain logic. The
 browser does not implement accounting matching, approval, VAR/YOK, response text
