@@ -29,6 +29,11 @@
           <button type="submit">Yükle ve incele</button>
         </div>
       </form>
+      <div class="review-actions">
+        <button id="reloadReview" type="button" disabled>Yenile</button>
+        <button id="saveChanges" type="button" disabled>Değişiklikleri kaydet</button>
+        <button id="approveRows" type="button" disabled>Seçilenleri onayla</button>
+      </div>
       <p id="message" role="status"></p>
     </section>
 
@@ -37,25 +42,31 @@
       <div><strong id="ready">0</strong><span>Sorunsuz</span></div>
       <div><strong id="review">0</strong><span>İnceleme</span></div>
       <div><strong id="blocked">0</strong><span>Blokaj</span></div>
+      <div><strong id="approved">0</strong><span>Onaylı</span></div>
     </section>
 
     <section class="table-wrap">
       <table>
         <thead>
           <tr>
+            <th>Seç</th>
             <th>Durum</th>
             <th>Tebliğ</th>
             <th>İcra dairesi</th>
             <th>Dosya</th>
+            <th>Tutar</th>
             <th>Borçlu</th>
             <th>TCKN/VKN</th>
-            <th>Tutar</th>
+            <th>Alacaklı</th>
+            <th>İBAN</th>
+            <th>89/1</th>
+            <th>Açıklama</th>
             <th>Muhatap</th>
             <th>Uyarı</th>
           </tr>
         </thead>
         <tbody id="rows">
-          <tr class="empty"><td colspan="9">Henüz ZIP yüklenmedi.</td></tr>
+          <tr class="empty"><td colspan="14">Henüz ZIP yüklenmedi.</td></tr>
         </tbody>
       </table>
     </section>

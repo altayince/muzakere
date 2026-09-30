@@ -27,6 +27,9 @@ private:
     void respond(QTcpSocket* socket, int status, QByteArray body, QByteArray content_type = "application/json") const;
     [[nodiscard]] QByteArray static_asset(const QString& path, QByteArray& content_type) const;
     [[nodiscard]] QByteArray import_zip(const Request& request, int& status) const;
+    [[nodiscard]] QByteArray review_state(const QString& batch_id, int& status) const;
+    [[nodiscard]] QByteArray save_review(const QString& batch_id, const Request& request, int& status) const;
+    [[nodiscard]] QByteArray approve_review(const QString& batch_id, const Request& request, int& status) const;
 
     Workspace& workspace_;
     std::unique_ptr<QTcpServer> server_;
