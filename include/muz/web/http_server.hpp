@@ -50,6 +50,8 @@ private:
     [[nodiscard]] QByteArray create_hamdata_export(const QString& batch_id, bool with_accounting, int& status) const;
     [[nodiscard]] QByteArray download_export(const QString& export_id, int& status, QByteArray& content_type,
         std::vector<Header>& headers) const;
+    [[nodiscard]] QByteArray import_accounting_return(const Request& request, int& status) const;
+    [[nodiscard]] QByteArray accounting_return_state(const QString& return_id, int& status) const;
 
     Workspace& workspace_;
     std::unique_ptr<QTcpServer> server_;

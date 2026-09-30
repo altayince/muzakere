@@ -154,7 +154,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-21 - Web HAMDATA ve HAMDATA + MUHASEBE indirme\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-23 - Web muhasebe donusu inceleme\n"
+        "Tarayicidan donen HAMDATA/MUHASEBE Exceli yuklenir; VAR/YOK, uyari ve blokaj satirlari mevcut C++ eslestirme mantigiyla gosterilir.\n\n"
+        "MUZ-21 - Web HAMDATA ve HAMDATA + MUHASEBE indirme\n"
         "Kaydedilmis batch icin tarayicidan HAMDATA veya HAMDATA + MUHASEBE Excel dosyasi olusturulup indirilebilir.\n\n"
         "MUZ-19 — Web review düzenleme ve onay\n"
         "Tarayıcı review satırlarını yeniden alabilir, alanları düzenleyip kaydedebilir ve uygun satırları ayrıca onaylayabilir.\n\n"
