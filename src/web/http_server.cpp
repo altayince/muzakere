@@ -530,19 +530,6 @@ QByteArray WebServer::create_hamdata_export(const QString& batch_id, bool with_a
             status = 404;
             return json(error_body("batch_not_found", "Batch was not found."));
         }
-        const auto rows = workspace_.accounting_rows(id);
-        if (rows.empty()) {
-            status = 400;
-            return json(error_body("export_blocked", "Review rows must exist before export."));
-        }
-        const auto blocked = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
-            return !row.approved || !can_approve(row);
-        });
-        if (blocked != rows.end()) {
-            status = 400;
-            return json(error_body("export_blocked", "All review rows must be saved and explicitly approved before export."));
-        }
-
         const auto export_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         const auto prefix = with_accounting ? QStringLiteral("HAMDATA-MUHASEBE-") : QStringLiteral("HAMDATA-");
         const auto filename = prefix + QString::fromStdString(id).left(8) + QStringLiteral(".xlsx");

@@ -155,7 +155,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
         }));
     });
     auto* changes = new QLabel(QStringLiteral("MUZ-21 - Web HAMDATA ve HAMDATA + MUHASEBE indirme\n"
-        "Onayli batch icin tarayicidan HAMDATA veya HAMDATA + MUHASEBE Excel dosyasi olusturulup indirilebilir.\n\n"
+        "Kaydedilmis batch icin tarayicidan HAMDATA veya HAMDATA + MUHASEBE Excel dosyasi olusturulup indirilebilir.\n\n"
         "MUZ-19 — Web review düzenleme ve onay\n"
         "Tarayıcı review satırlarını yeniden alabilir, alanları düzenleyip kaydedebilir ve uygun satırları ayrıca onaylayabilir.\n\n"
         "MUZ-15 — Web ZIP inceleme dilimi\n"

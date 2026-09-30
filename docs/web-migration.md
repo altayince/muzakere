@@ -88,7 +88,7 @@ Implemented in MUZ-21:
 - browser buttons for HAMDATA and HAMDATA + MUHASEBE workbook generation
 - batch-scoped export endpoints that call `LocalWorkspace::export_hamdata`
 - opaque export download IDs so local filesystem paths are never exposed to the browser
-- approval-gated web export flow while preserving existing desktop exporter behavior
+- web export flow that calls the existing core exporter without adding approval or validation gates
 - integration tests for XLSX downloads, headers, invalid IDs, blockers and MUHASEBE deduplication
 
 Not implemented yet:

@@ -1,5 +1,6 @@
 #include "muz/infrastructure/local_workspace.hpp"
 #include "muz/web/http_server.hpp"
+#include "qt_paths.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <QBuffer>
@@ -130,17 +131,6 @@ QJsonObject get_json(QNetworkAccessManager& network, const QUrl& url, int expect
 
 QJsonObject first_row(const QJsonObject& review) {
     return review["rows"].toArray().first().toObject();
-}
-
-QJsonArray row_ids(const QJsonObject& review) {
-    QJsonArray ids;
-    for (const auto& value : review["rows"].toArray()) ids.append(value.toObject()["id"].toString());
-    return ids;
-}
-
-QJsonObject approve_all(QNetworkAccessManager& network, quint16 port, const QJsonObject& review) {
-    return post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/review/approve")
-        .arg(port).arg(review["batch"].toObject()["id"].toString())), {{"rowIds", row_ids(review)}});
 }
 
 QString save_xlsx(const QByteArray& bytes, QTemporaryDir& temp, const QString& name = QStringLiteral("download.xlsx")) {
@@ -292,7 +282,7 @@ TEST_CASE("Web upload rejects non ZIP media before reaching workspace", "[integr
     REQUIRE(QJsonDocument::fromJson(result.body).object()["error"].toObject()["code"].toString() == "unsupported_media_type");
 }
 
-TEST_CASE("Web HAMDATA export requires approval and downloads a valid workbook", "[integration][web][hamdata]") {
+TEST_CASE("Web HAMDATA export follows core exporter behavior without requiring approval", "[integration][web][hamdata]") {
     QTemporaryDir temp;
     REQUIRE(temp.isValid());
     muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
@@ -302,12 +292,7 @@ TEST_CASE("Web HAMDATA export requires approval and downloads a valid workbook",
     QNetworkAccessManager network;
     auto review = upload_review(network, server.port());
     const auto batch_id = review["batch"].toObject()["id"].toString();
-
-    auto failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/exports/hamdata")
-        .arg(server.port()).arg(batch_id)), {}, 400);
-    REQUIRE(failed["error"].toObject()["code"].toString() == "export_blocked");
-
-    review = approve_all(network, server.port(), review);
+    REQUIRE_FALSE(first_row(review)["approved"].toBool());
     const auto created = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/exports/hamdata")
         .arg(server.port()).arg(batch_id)), {}, 201);
     REQUIRE(created["exportId"].toString().size() == 36);
@@ -331,6 +316,18 @@ TEST_CASE("Web HAMDATA export requires approval and downloads a valid workbook",
     REQUIRE(book.dimension().lastRow() == 2);
     REQUIRE(book.dimension().lastColumn() == 11);
     REQUIRE(book.read(2, 7).toString() == "2026/42");
+
+    const auto core_path = temp.path() + "/core-hamdata.xlsx";
+    workspace.export_hamdata(batch_id.toStdString(), muz::native_path(core_path), false);
+    QXlsx::Document core(core_path);
+    REQUIRE(core.load());
+    REQUIRE(core.sheetNames().contains("HAMDATA"));
+    REQUIRE_FALSE(core.sheetNames().contains("MUHASEBE"));
+    REQUIRE(core.selectSheet("HAMDATA"));
+    REQUIRE(core.dimension().lastRow() == book.dimension().lastRow());
+    REQUIRE(core.dimension().lastColumn() == book.dimension().lastColumn());
+    REQUIRE(core.read(2, 7).toString() == book.read(2, 7).toString());
+    REQUIRE(core.read(2, 10).toString() == book.read(2, 10).toString());
 }
 
 TEST_CASE("Web HAMDATA with accounting preserves HAMDATA rows and deduplicates MUHASEBE by identity", "[integration][web][hamdata]") {
@@ -351,7 +348,6 @@ TEST_CASE("Web HAMDATA with accounting preserves HAMDATA rows and deduplicates M
     });
     REQUIRE(review["summary"].toObject()["total"].toInt() == 3);
     const auto batch_id = review["batch"].toObject()["id"].toString();
-    review = approve_all(network, server.port(), review);
 
     const auto created = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/exports/hamdata-with-accounting")
         .arg(server.port()).arg(batch_id)), {}, 201);
@@ -382,7 +378,7 @@ TEST_CASE("Web HAMDATA with accounting preserves HAMDATA rows and deduplicates M
     REQUIRE(book.read(3, 4).toString().isEmpty());
 }
 
-TEST_CASE("Web HAMDATA export reports blocked and unknown ids without exposing paths", "[integration][web][hamdata]") {
+TEST_CASE("Web HAMDATA with accounting keeps missing identity in HAMDATA and lets core exclude it from MUHASEBE", "[integration][web][hamdata]") {
     QTemporaryDir temp;
     REQUIRE(temp.isValid());
     muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
@@ -394,24 +390,56 @@ TEST_CASE("Web HAMDATA export reports blocked and unknown ids without exposing p
     const auto batch_id = review["batch"].toObject()["id"].toString();
     auto row = first_row(review);
     auto cells = row["cells"].toObject();
-    cells["debtorId"] = "bad-id";
+    cells["debtorId"] = "";
     row["cells"] = cells;
     review = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/review/save")
         .arg(server.port()).arg(batch_id)), {{"rows", QJsonArray{row}}});
-    REQUIRE(first_row(review)["status"].toString() == "blocked");
+    REQUIRE(first_row(review)["status"].toString() == "review");
+    REQUIRE_FALSE(first_row(review)["approved"].toBool());
 
-    const auto blocked = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/exports/hamdata")
-        .arg(server.port()).arg(batch_id)), {}, 400);
-    REQUIRE(blocked["error"].toObject()["code"].toString() == "export_blocked");
-    REQUIRE_FALSE(QJsonDocument(blocked).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+    const auto created = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/%2/exports/hamdata-with-accounting")
+        .arg(server.port()).arg(batch_id)), {}, 201);
+    const auto download = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1%2")
+        .arg(server.port()).arg(created["downloadUrl"].toString()))));
+    REQUIRE(download.status == 200);
 
+    const auto workbook = save_xlsx(download.body, temp, QStringLiteral("missing-id.xlsx"));
+    QXlsx::Document book(workbook);
+    REQUIRE(book.load());
+    REQUIRE(book.selectSheet("HAMDATA"));
+    REQUIRE(book.dimension().lastRow() == 2);
+    REQUIRE(book.read(2, 10).toString().isEmpty());
+    REQUIRE(book.selectSheet("MUHASEBE"));
+    REQUIRE(book.read(2, 1).toString().isEmpty());
+    REQUIRE(book.read(2, 2).toString().isEmpty());
+
+    const auto core_path = temp.path() + "/core-missing-id.xlsx";
+    workspace.export_hamdata(batch_id.toStdString(), muz::native_path(core_path), true);
+    QXlsx::Document core(core_path);
+    REQUIRE(core.load());
+    REQUIRE(core.selectSheet("HAMDATA"));
+    REQUIRE(core.read(2, 10).toString() == book.read(2, 10).toString());
+    REQUIRE(core.selectSheet("MUHASEBE"));
+    REQUIRE(core.read(2, 1).toString() == book.read(2, 1).toString());
+}
+
+TEST_CASE("Web HAMDATA export reports unknown ids without exposing paths", "[integration][web][hamdata]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+
+    QNetworkAccessManager network;
     const auto unknown_batch = post_json(network,
         QUrl(QStringLiteral("http://127.0.0.1:%1/api/batches/00000000-0000-0000-0000-000000000000/exports/hamdata")
         .arg(server.port())), {}, 404);
     REQUIRE(unknown_batch["error"].toObject()["code"].toString() == "batch_not_found");
+    REQUIRE_FALSE(QJsonDocument(unknown_batch).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
 
     const auto unknown_export = get_json(network,
         QUrl(QStringLiteral("http://127.0.0.1:%1/api/exports/00000000-0000-0000-0000-000000000000/download")
         .arg(server.port())), 404);
     REQUIRE(unknown_export["error"].toObject()["code"].toString() == "export_not_found");
+    REQUIRE_FALSE(QJsonDocument(unknown_export).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
 }
