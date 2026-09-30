@@ -46,7 +46,7 @@ POST /api/accounting-returns
 GET  /api/accounting-returns/{returnId}
 GET  /api/response-profile
 POST /api/response-profile
-GET  /api/accounting-returns/{returnId}/responses/{rowId}/preview
+POST /api/accounting-returns/{returnId}/responses/{rowId}/preview
 POST /api/accounting-returns/{returnId}/response-exports
 GET  /api/response-exports/{exportId}
 GET  /api/response-exports/{exportId}/files/{fileId}

@@ -506,13 +506,23 @@ async function previewResponse(rowId) {
   responsePreviewFrame.removeAttribute("srcdoc");
   updateButtons();
   try {
-    const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}/responses/${encodeURIComponent(rowId)}/preview`);
+    const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}/responses/${encodeURIComponent(rowId)}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: {
+          lawyer: responseLawyer.value,
+          address: responseAddress.value
+        }
+      })
+    });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error?.message || "Önizleme alınamadı.");
     if (currentPreviewRowId !== rowId) return;
     responsePreviewFrame.srcdoc = payload.html || "";
     responsePreviewStatus.textContent = "Önizleme güncel.";
   } catch (error) {
+    if (currentPreviewRowId !== rowId) return;
     responsePreviewFrame.removeAttribute("srcdoc");
     responsePreviewStatus.textContent = error.message;
   } finally {
