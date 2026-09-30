@@ -108,14 +108,14 @@ the desktop app available. Start the headless server after a normal build:
 Open `http://127.0.0.1:8080/` to run the two-stage web workflow:
 
 1. upload a ZIP, open **Düzenle** for all review fields, save corrections, and download HAMDATA or HAMDATA + MUHASEBE directly;
-2. upload the returned workbook, inspect VAR/YOK and row details, enter lawyer/address, select eligible rows, preview responses, generate PDFs and use each **PDF indir** action.
+2. upload the returned workbook, inspect VAR/YOK and row details, enter lawyer/address, select eligible rows, preview responses, then **Seçili satırlardan PDF oluştur ve ZIP indir** saves all selected PDFs in one archive.
 
 Both lists use compact tables with expandable details and scrolling contained
 inside the table on smaller screens. Preview and PDF generation use the current
 lawyer/address form values; saving the profile remains a separate action.
-Excel/PDF download actions offer file name/location selection where the browser
+Excel/ZIP download actions offer file name/location selection where the browser
 supports Save As, otherwise they use the browser's download preferences. After
-PDF generation, use the individual **PDF indir** buttons to save the files.
+PDF generation, a compact result panel offers **ZIP'i tekrar indir** if needed.
 
 The web server remains a thin adapter over the C++ workspace/domain logic. The
 browser does not implement accounting matching, approval, VAR/YOK, response text

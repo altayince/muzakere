@@ -155,7 +155,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
         }));
     });
     auto* changes = new QLabel(QStringLiteral("MUZ-29 — Web çalışma alanı\n"
-        "İki aşamalı arayüz, açılabilir tablo ayrıntıları, doğrudan Excel indirme ve muhasebe bölümünde PDF işlemleri.\n\n"
+        "İki aşamalı arayüz, açılabilir tablo ayrıntıları, doğrudan Excel indirme ve seçili cevap PDF'lerini tek ZIP olarak kaydetme.\n\n"
         "MUZ-23 - Web muhasebe donusu inceleme\n"
         "Tarayicidan donen HAMDATA/MUHASEBE Exceli yuklenir; VAR/YOK, uyari ve blokaj satirlari mevcut C++ eslestirme mantigiyla gosterilir.\n\n"
         "MUZ-21 - Web HAMDATA ve HAMDATA + MUHASEBE indirme\n"

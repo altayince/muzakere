@@ -67,6 +67,8 @@ private:
     [[nodiscard]] QByteArray preview_response(const QString& return_id, const QString& row_id, const Request& request, int& status) const;
     [[nodiscard]] QByteArray create_response_export(const QString& return_id, const Request& request, int& status) const;
     [[nodiscard]] QByteArray response_export_state(const QString& export_id, int& status) const;
+    [[nodiscard]] QByteArray download_response_archive(const QString& export_id, int& status,
+        QByteArray& content_type, std::vector<Header>& headers) const;
     [[nodiscard]] QByteArray download_response_file(const QString& export_id, const QString& file_id, int& status,
         QByteArray& content_type, std::vector<Header>& headers) const;
 

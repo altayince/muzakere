@@ -85,10 +85,11 @@ function showDownload(payload) {
 async function chooseSaveFile(filename) {
   if (!window.showSaveFilePicker) return null;
   const pdf = filename.toLowerCase().endsWith(".pdf");
+  const zip = filename.toLowerCase().endsWith(".zip");
   return window.showSaveFilePicker({
     suggestedName: filename,
-    types: [{ description: pdf ? "PDF belgesi" : "Excel çalışma kitabı",
-      accept: pdf ? { "application/pdf": [".pdf"] }
+    types: [{ description: zip ? "PDF arşivi" : pdf ? "PDF belgesi" : "Excel çalışma kitabı",
+      accept: zip ? { "application/zip": [".zip"] } : pdf ? { "application/pdf": [".pdf"] }
         : { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }]
   });
 }
@@ -165,26 +166,18 @@ function resetReturnWorkflow(statusText = "") {
 
 function showResponseDownloads(payload) {
   const files = payload.files || [];
-  responseDownloadLabel.textContent = `${files.length} PDF hazır.`;
+  responseDownloadLabel.textContent = `${files.length} PDF · tek ZIP dosyası`;
   responseDownloads.replaceChildren();
-  for (const file of files) {
-    const item = document.createElement("div");
-    item.className = "download-item";
-    const name = document.createElement("span");
-    name.textContent = file.filename;
-    const link = document.createElement("a");
-    link.href = file.downloadUrl;
-    link.download = file.filename;
-    link.className = "download-link";
-    link.textContent = "PDF indir";
-    link.setAttribute("aria-label", `${file.filename} PDF indir`);
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      downloadFile(file.downloadUrl, file.filename, returnMessage);
-    });
-    item.append(name, link);
-    responseDownloads.append(item);
-  }
+  const link = document.createElement("a");
+  link.href = payload.archive.downloadUrl;
+  link.download = payload.archive.filename;
+  link.className = "download-link";
+  link.textContent = "ZIP'i tekrar indir";
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadFile(payload.archive.downloadUrl, payload.archive.filename, returnMessage);
+  });
+  responseDownloads.append(link);
   responseDownloadPanel.hidden = false;
 }
 
@@ -778,6 +771,7 @@ generateResponsesButton.addEventListener("click", async () => {
   returnMessage.textContent = "Cevap PDF'leri hazırlanıyor...";
   try {
     clearResponseDownloads();
+    const handle = await chooseSaveFile("CEVAPLAR.zip");
     const rowIds = selectedResponseIds();
     const payload = await postJson(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}/response-exports`, {
       rowIds,
@@ -789,9 +783,13 @@ generateResponsesButton.addEventListener("click", async () => {
     if (generation !== returnGeneration) return;
     showResponseDownloads(payload);
     responseDownloadPanel.scrollIntoView({ block: "nearest" });
-    returnMessage.textContent = `${(payload.files || []).length} PDF hazır. Aşağıdaki “PDF indir” düğmeleriyle kaydedin.`;
+    await saveDownload(payload.archive.downloadUrl, payload.archive.filename, handle);
+    if (generation !== returnGeneration) return;
+    returnMessage.textContent = handle ? "Tüm cevap PDF'leri tek ZIP dosyası olarak kaydedildi."
+      : "Tüm cevap PDF'lerini içeren ZIP tarayıcı indirmelerine gönderildi.";
   } catch (error) {
-    if (generation === returnGeneration) returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.name === "AbortError"
+      ? "Kaydetme iptal edildi." : error.message;
   } finally {
     responsesBusy = false;
     updateButtons();

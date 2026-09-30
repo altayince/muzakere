@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="tr">
 <head>
   <meta charset="utf-8">
@@ -54,9 +54,9 @@
       <div class="response-workbench">
         <div class="profile-heading"><div><h3>Cevap belgelerinde kullanılacak bilgiler</h3><p class="hint">Önizleme ve PDF, aşağıdaki güncel bilgileri kullanır. Sonraki işlemler için bilgilerinizi kaydedebilirsiniz.</p></div><button id="saveResponseProfile" type="button" class="secondary">Vekil bilgilerini kaydet</button></div>
         <div class="profile-grid"><div><label for="responseLawyer">Vekil adı</label><input id="responseLawyer" type="text" autocomplete="name" placeholder="Av. Ad Soyad"></div><div><label for="responseAddress">Vekil adresi</label><textarea id="responseAddress" rows="2" placeholder="Tebligat adresi"></textarea></div></div>
-        <div class="action-bar"><div class="review-actions"><button id="selectValidResponses" type="button" class="secondary" disabled>Uygun satırları seç</button><button id="previewSelectedResponse" type="button" class="secondary" disabled>Seçili satırı önizle</button><button id="generateResponses" type="button" disabled>Seçili satırlardan PDF oluştur</button></div><p id="responseSelectionStatus" class="hint" aria-live="polite">PDF oluşturmak için uygun satırları seçin ve vekil bilgilerini girin.</p></div>
+        <div class="action-bar"><div class="review-actions"><button id="selectValidResponses" type="button" class="secondary" disabled>Uygun satırları seç</button><button id="previewSelectedResponse" type="button" class="secondary" disabled>Seçili satırı önizle</button><button id="generateResponses" type="button" disabled>Seçili satırlardan PDF oluştur ve ZIP indir</button></div><p id="responseSelectionStatus" class="hint" aria-live="polite">PDF oluşturmak için uygun satırları seçin ve vekil bilgilerini girin.</p></div>
         <div id="responsePreviewPanel" class="preview-panel" hidden><div class="preview-header"><div><p class="eyebrow">CEVAP ÖNİZLEMESİ</p><h3 id="responsePreviewTitle">Seçili satır</h3></div><button id="clearResponsePreview" type="button" class="secondary" disabled>Önizlemeyi kapat</button></div><p id="responsePreviewStatus" role="status" aria-live="polite"></p><iframe id="responsePreviewFrame" title="Cevap HTML önizlemesi" sandbox=""></iframe></div>
-        <div id="responseDownloadPanel" class="download-panel generated-panel" hidden><div><p class="eyebrow">CEVAP BELGELERİ</p><h3 id="responseDownloadLabel"></h3><p class="hint">Her dosyanın yanındaki PDF indir düğmesini kullanın.</p></div><div id="responseDownloads" class="download-list" aria-label="Oluşturulan PDF indirmeleri"></div></div>
+        <div id="responseDownloadPanel" class="download-panel generated-panel" hidden><div><p class="eyebrow">CEVAP BELGELERİ</p><h3 id="responseDownloadLabel"></h3><p class="hint">Seçtiğiniz dosyaların tüm cevapları tek arşivde. Gerekirse ZIP dosyasını tekrar indirebilirsiniz.</p></div><div id="responseDownloads" class="download-list" aria-label="Cevap PDF arşivini indir"></div></div>
       </div>
       <p id="returnMessage" class="status-message" role="status" aria-live="polite"></p>
     </section>

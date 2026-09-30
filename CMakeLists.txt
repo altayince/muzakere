@@ -38,7 +38,7 @@ add_executable(muzakere WIN32 src/main.cpp src/ui/main_window.cpp src/ui/respons
 add_executable(muz_pdf_worker src/pdf_worker.cpp)
 add_library(muz_web src/web/http_server.cpp resources/web.qrc)
 target_include_directories(muz_web PUBLIC include PRIVATE src/infrastructure)
-target_link_libraries(muz_web PUBLIC muz_infrastructure PRIVATE Qt6::Core Qt6::Network)
+target_link_libraries(muz_web PUBLIC muz_infrastructure PRIVATE Qt6::Core Qt6::Network miniz)
 add_executable(muzakere_server src/server_main.cpp)
 target_link_libraries(muz_pdf_worker PRIVATE Qt6::Core)
 add_dependencies(muzakere muz_pdf_worker)

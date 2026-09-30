@@ -49,6 +49,7 @@ POST /api/response-profile
 POST /api/accounting-returns/{returnId}/responses/{rowId}/preview
 POST /api/accounting-returns/{returnId}/response-exports
 GET  /api/response-exports/{exportId}
+GET  /api/response-exports/{exportId}/download
 GET  /api/response-exports/{exportId}/files/{fileId}
 ```
 
@@ -131,13 +132,20 @@ Implemented in MUZ-29:
 - compact tables with expandable, labelled editors/details; all existing review fields remain available
 - bounded keyboard-scrollable table regions with sticky headers on small screens
 - workbook generation starts the Excel download directly and retains a retry link
-- response preview, profile, selection, PDF generation and per-file download actions live in stage 2
+- response preview, profile, selection and PDF generation with one ZIP download live in stage 2
 
 Workbook creation returns HTTP 201; the browser downloads the resulting opaque
-URL. Where supported, clicking an Excel/PDF download opens the native Save As
+URL. Where supported, clicking an Excel/ZIP download opens the native Save As
 picker before awaiting network operations. Otherwise the browser's normal
 download preferences apply. Canceling the picker does not start a workbook export.
-PDF generation lists the resulting files; each **PDF indir** action saves that PDF.
+PDF generation automatically saves one ZIP containing all selected response PDFs.
+The compact result panel shows the PDF count and one retry link. Canceling Save As
+before generation creates no response export. Export metadata includes an `archive`
+object with `filename` and an opaque `downloadUrl`; existing individual PDF URLs
+remain available through the API. ZIP members retain their UTF-8 filenames and
+the exact core-generated PDF bytes. A missing member fails the whole download,
+rather than serving an incomplete ZIP. Packaging never alters persisted PDFs,
+manifests, hashes or audit records.
 
 While an accounting upload is pending, old rows are retained but reload, selection,
 preview and PDF generation are disabled. A failed upload restores those actions

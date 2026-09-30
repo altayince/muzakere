@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <optional>
 #include <set>
+#include <miniz.h>
 
 extern int qInitResources_web();
 
@@ -464,6 +465,15 @@ void WebServer::handle(QTcpSocket* socket, const Request& request) {
         respond(socket, status, response_export_state(segments[2], status));
         return;
     }
+    if (segments.size() == 4 && segments[0] == "api" && segments[1] == "response-exports" &&
+        segments[3] == "download" && request.method == "GET") {
+        int status = 200;
+        QByteArray content_type;
+        std::vector<Header> headers;
+        const auto body = download_response_archive(segments[2], status, content_type, headers);
+        respond(socket, status, body, content_type, headers);
+        return;
+    }
     if (segments.size() == 5 && segments[0] == "api" && segments[1] == "response-exports" &&
         segments[3] == "files" && request.method == "GET") {
         int status = 200;
@@ -848,7 +858,57 @@ QByteArray WebServer::response_export_state(const QString& export_id, int& statu
         });
     }
     status = 200;
-    return json({{"exportId", export_id}, {"returnId", text(data.return_id)}, {"files", files}});
+    return json({{"exportId", export_id}, {"returnId", text(data.return_id)}, {"files", files},
+        {"archive", QJsonObject{
+            {"filename", QStringLiteral("CEVAPLAR-%1.zip").arg(export_id.left(8))},
+            {"downloadUrl", QStringLiteral("/api/response-exports/%1/download").arg(export_id)}
+        }}});
+}
+
+QByteArray WebServer::download_response_archive(const QString& export_id, int& status,
+        QByteArray& content_type, std::vector<Header>& headers) const {
+    content_type = "application/json";
+    ResponseExportSet data;
+    {
+        std::lock_guard guard(export_mutex_);
+        const auto found = response_exports_.find(export_id.toStdString());
+        if (found == response_exports_.end()) {
+            status = 404;
+            return json(error_body("response_export_not_found", "Response export was not found."));
+        }
+        data = found->second;
+    }
+    // Package the registered, core-generated PDFs only. Their durable files and
+    // audit records remain untouched; the download archive is derived on demand.
+    struct Writer {
+        mz_zip_archive zip{};
+        ~Writer() { if (zip.m_pState) mz_zip_writer_end(&zip); }
+    } writer;
+    try {
+        if (data.files.empty() || !mz_zip_writer_init_heap(&writer.zip, 0, 0)) throw Error(ErrorCode::file_io);
+        for (const auto& entry : data.files) {
+            QFile file(qpath(entry.path));
+            if (!file.open(QIODevice::ReadOnly)) throw Error(ErrorCode::file_io);
+            const auto bytes = file.readAll();
+            if (file.error() != QFileDevice::NoError || bytes.isEmpty()) throw Error(ErrorCode::file_io);
+            const auto name = entry.filename.toUtf8();
+            if (!mz_zip_writer_add_mem(&writer.zip, name.constData(), bytes.constData(),
+                    static_cast<size_t>(bytes.size()), MZ_DEFAULT_COMPRESSION)) throw Error(ErrorCode::file_io);
+        }
+        void* buffer = nullptr;
+        size_t size = 0;
+        if (!mz_zip_writer_finalize_heap_archive(&writer.zip, &buffer, &size)) throw Error(ErrorCode::file_io);
+        const std::unique_ptr<void, decltype(&mz_free)> owned(buffer, &mz_free);
+        const QByteArray body(static_cast<const char*>(buffer), static_cast<qsizetype>(size));
+        status = 200;
+        content_type = "application/zip";
+        headers.push_back({"Content-Disposition", "attachment; filename=\"CEVAPLAR-" + export_id.left(8).toUtf8() + ".zip\""});
+        headers.push_back({"Cache-Control", "no-store"});
+        return body;
+    } catch (const Error&) {
+        status = 500;
+        return json(error_body("response_archive_failed", "Response ZIP could not be created. Please retry."));
+    }
 }
 
 QByteArray WebServer::create_response_export(const QString& return_id, const Request& request, int& status) const {

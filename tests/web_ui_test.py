@@ -25,7 +25,7 @@ class DownloadHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         files = {
             "/api/exports/opaque/download": ("hamdata.xlsx", b"synthetic workbook download"),
-            "/api/response-exports/opaque/files/file-1": ("cevap.pdf", b"%PDF-synthetic"),
+            "/api/response-exports/opaque/download": ("cevaplar.zip", b"PK-synthetic-archive"),
         }
         if self.path not in files:
             self.send_error(404)
@@ -104,8 +104,8 @@ def run():
             payload = {"html": "<p>" + body["profile"]["lawyer"] + "</p>"}
         elif path.endswith("/response-exports"):
             status = 201
-            payload = {"files": [dict(filename="cevap.pdf", downloadUrl="/api/response-exports/opaque/files/file-1")]}
-        elif path == "/api/response-exports/opaque/files/file-1":
+            payload = {"files": [dict(filename="cevap.pdf", downloadUrl="/api/response-exports/opaque/files/file-1")], "archive": dict(filename="cevaplar.zip", downloadUrl="/api/response-exports/opaque/download")}
+        elif path == "/api/response-exports/opaque/download":
             route.continue_()
             return
         elif path.startswith("/api/accounting-returns"):
@@ -179,15 +179,20 @@ def run():
         page.locator("#responseLawyer").fill("Av. Güncel Form")
         page.locator('[data-role="preview-response"][data-row-id="response-0"]').click()
         expect(page.locator("#responsePreviewFrame")).to_have_attribute("srcdoc", "<p>Av. Güncel Form</p>")
-        page.locator("#generateResponses").click()
-        expect(page.locator("#responseDownloadLabel")).to_have_text("1 PDF hazır.")
+        with page.expect_download() as initial_archive:
+            page.locator("#generateResponses").click()
+        assert initial_archive.value.suggested_filename == "cevaplar.zip"
+        assert Path(initial_archive.value.path()).read_bytes() == b"PK-synthetic-archive"
+        expect(page.locator("#responseDownloadLabel")).to_have_text("1 PDF · tek ZIP dosyası")
+        expect(page.locator("#responseDownloads a")).to_have_count(1)
+        expect(page.locator("#responseDownloads")).not_to_contain_text("cevap.pdf")
         request_body = next(body for path, body in calls if path.endswith("/response-exports"))
         assert request_body["rowIds"] == ["response-0", "response-1"]
         assert request_body["profile"]["lawyer"] == "Av. Güncel Form"
         with page.expect_download() as download:
-            page.get_by_role("link", name="cevap.pdf PDF indir").click()
-        assert download.value.suggested_filename == "cevap.pdf"
-        assert Path(download.value.path()).read_bytes() == b"%PDF-synthetic"
+            page.get_by_role("link", name="ZIP'i tekrar indir").click()
+        assert download.value.suggested_filename == "cevaplar.zip"
+        assert Path(download.value.path()).read_bytes() == b"PK-synthetic-archive"
 
         # Native-save branch: picker is called in the user gesture, before the
         # API work; the downloaded bytes are written and the file is closed.
@@ -206,19 +211,29 @@ def run():
         for button in ["#exportHamdata", "#exportHamdataAccounting"]:
             page.locator(button).click()
             expect(page.locator("#message")).to_have_text("hamdata.xlsx kaydedildi.")
-        page.get_by_role("link", name="cevap.pdf PDF indir").click()
-        expect(page.locator("#returnMessage")).to_have_text("cevap.pdf kaydedildi.")
+        page.get_by_role("link", name="ZIP'i tekrar indir").click()
+        expect(page.locator("#returnMessage")).to_have_text("cevaplar.zip kaydedildi.")
         saved_files = page.evaluate("savedFiles")
-        assert [item["name"] for item in saved_files] == ["HAMDATA.xlsx", "HAMDATA-MUHASEBE.xlsx", "cevap.pdf"]
+        assert [item["name"] for item in saved_files] == ["HAMDATA.xlsx", "HAMDATA-MUHASEBE.xlsx", "cevaplar.zip"]
         assert all(item["activation"] and item["closed"] for item in saved_files)
         assert saved_files[0]["text"] == "synthetic workbook download"
-        assert saved_files[2]["text"] == "%PDF-synthetic"
+        assert saved_files[2]["text"] == "PK-synthetic-archive"
+        page.locator("#generateResponses").click()
+        expect(page.locator("#returnMessage")).to_have_text("Tüm cevap PDF'leri tek ZIP dosyası olarak kaydedildi.")
+        generated_save = page.evaluate("savedFiles.at(-1)")
+        assert generated_save["name"] == "CEVAPLAR.zip"
+        assert generated_save["activation"] and generated_save["closed"]
+        assert generated_save["text"] == "PK-synthetic-archive"
         before_cancel = len(calls)
         page.evaluate("() => { window.showSaveFilePicker = async () => { throw new DOMException('cancel', 'AbortError'); }; }")
         page.locator("#exportHamdata").click()
         expect(page.locator("#message")).to_have_text("Kaydetme iptal edildi.")
         assert len(calls) == before_cancel
         expect(page.locator("#exportHamdata")).to_be_enabled()
+        page.locator("#generateResponses").click()
+        expect(page.locator("#returnMessage")).to_have_text("Kaydetme iptal edildi.")
+        assert len(calls) == before_cancel
+        expect(page.locator("#generateResponses")).to_be_enabled()
 
         # Hold a new upload pending: old rows remain but actions must not run.
         # Also deliver old preview/reload results late, after the new flow began.
