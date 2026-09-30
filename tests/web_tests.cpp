@@ -225,6 +225,11 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     const auto page = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(server.port()))));
     REQUIRE(page.status == 200);
     REQUIRE(page.body.contains("ZIP"));
+
+    const auto script = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/app.js").arg(server.port()))));
+    REQUIRE(script.status == 200);
+    REQUIRE(script.body.contains("decision-blocked"));
+    REQUIRE(script.body.contains(QByteArray("\xE2\x80\x94")));
 }
 
 TEST_CASE("Web ZIP import uses existing parser and serializes review rows", "[integration][web]") {
@@ -571,8 +576,18 @@ TEST_CASE("Web accounting return upload surfaces missing duplicate and invalid-c
         REQUIRE(book.write(2, 1, "99999999999"));
     });
     auto payload = upload_return(network, server.port(), missing);
-    REQUIRE(payload["summary"].toObject()["blocked"].toInt() >= 2);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() == 2);
+    REQUIRE(payload["summary"].toObject()["var"].toInt() == 0);
+    REQUIRE(payload["summary"].toObject()["yok"].toInt() == 3);
+    REQUIRE(payload["rows"].toArray()[0].toObject()["decision"].toString() == "blocked");
+    REQUIRE(payload["rows"].toArray()[1].toObject()["decision"].toString() == "blocked");
     REQUIRE(payload["rows"].toArray()[0].toObject()["blockers"].toArray().first().toString().contains("muhasebe"));
+    payload = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2")
+        .arg(server.port()).arg(payload["return"].toObject()["id"].toString())));
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() == 2);
+    REQUIRE(payload["summary"].toObject()["var"].toInt() == 0);
+    REQUIRE(payload["summary"].toObject()["yok"].toInt() == 3);
+    REQUIRE(payload["rows"].toArray()[0].toObject()["decision"].toString() == "blocked");
 
     const auto duplicate = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
         REQUIRE(book.selectSheet("MUHASEBE"));
@@ -581,7 +596,11 @@ TEST_CASE("Web accounting return upload surfaces missing duplicate and invalid-c
         REQUIRE(book.write(6, 4, 50.0));
     });
     payload = upload_return(network, server.port(), duplicate);
-    REQUIRE(payload["summary"].toObject()["blocked"].toInt() >= 2);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() == 2);
+    REQUIRE(payload["summary"].toObject()["var"].toInt() == 0);
+    REQUIRE(payload["summary"].toObject()["yok"].toInt() == 3);
+    REQUIRE(payload["rows"].toArray()[0].toObject()["decision"].toString() == "blocked");
+    REQUIRE(payload["rows"].toArray()[1].toObject()["decision"].toString() == "blocked");
     REQUIRE(QJsonDocument(payload).toJson(QJsonDocument::Compact).contains("yinelenen"));
 
     const auto invalid = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
@@ -589,7 +608,11 @@ TEST_CASE("Web accounting return upload surfaces missing duplicate and invalid-c
         REQUIRE(book.currentWorksheet()->writeFormula(2, 4, QXlsx::CellFormula("1+1")));
     });
     payload = upload_return(network, server.port(), invalid);
-    REQUIRE(payload["summary"].toObject()["blocked"].toInt() >= 2);
+    REQUIRE(payload["summary"].toObject()["blocked"].toInt() == 2);
+    REQUIRE(payload["summary"].toObject()["var"].toInt() == 0);
+    REQUIRE(payload["summary"].toObject()["yok"].toInt() == 3);
+    REQUIRE(payload["rows"].toArray()[0].toObject()["decision"].toString() == "blocked");
+    REQUIRE(payload["rows"].toArray()[1].toObject()["decision"].toString() == "blocked");
     REQUIRE_FALSE(payload["rows"].toArray()[0].toObject()["blockers"].toArray().isEmpty());
     REQUIRE_FALSE(QJsonDocument(payload).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
 }

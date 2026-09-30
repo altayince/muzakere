@@ -92,6 +92,7 @@ QJsonArray strings(const std::vector<std::string>& values) {
 }
 
 QString response_decision(const ResponseRow& row) {
+    if (!row.errors.empty()) return QStringLiteral("blocked");
     return row.available_cents.has_value() ? QStringLiteral("var") : QStringLiteral("yok");
 }
 
@@ -142,11 +143,14 @@ QJsonObject accounting_return_json(const AccountingReturn& item, const std::vect
     QJsonArray row_items;
     int var = 0, yok = 0, ready = 0, review = 0, blocked = 0;
     for (const auto& row : rows) {
-        if (row.available_cents) ++var;
-        else ++yok;
-        if (!row.errors.empty()) ++blocked;
-        else if (!row.source.warnings.empty()) ++review;
-        else ++ready;
+        if (!row.errors.empty()) {
+            ++blocked;
+        } else {
+            if (row.available_cents) ++var;
+            else ++yok;
+            if (!row.source.warnings.empty()) ++review;
+            else ++ready;
+        }
         row_items.append(response_row_json(row));
     }
     return {

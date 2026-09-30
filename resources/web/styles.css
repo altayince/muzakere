@@ -235,7 +235,8 @@ td input[type=checkbox] {
 }
 
 .decision-var,
-.decision-yok {
+.decision-yok,
+.decision-blocked {
   font-weight: 700;
 }
 
@@ -245,6 +246,10 @@ td input[type=checkbox] {
 
 .decision-yok {
   color: var(--muted);
+}
+
+.decision-blocked {
+  color: var(--red-ink);
 }
 
 @media (max-width: 760px) {

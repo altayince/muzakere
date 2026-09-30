@@ -204,8 +204,9 @@ function renderReturnRows(rows) {
     row.className = item.status;
     const status = cell(labels[item.status] || item.status);
     status.className = "badge";
-    const decision = cell((item.decision || "").toUpperCase());
-    decision.className = item.decision === "var" ? "decision-var" : "decision-yok";
+    const decisionText = item.decision === "var" || item.decision === "yok" ? item.decision.toUpperCase() : "—";
+    const decision = cell(decisionText);
+    decision.className = item.decision === "var" ? "decision-var" : item.decision === "yok" ? "decision-yok" : "decision-blocked";
     row.append(
       status,
       decision,
