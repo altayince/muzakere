@@ -35,6 +35,8 @@ let currentReturnId = "";
 let currentRows = [];
 let currentReturnRows = [];
 let currentPreviewRowId = "";
+let workbookBusy = false;
+let responsesBusy = false;
 const dirtyRows = new Set();
 
 const labels = {
@@ -55,6 +57,12 @@ const editableFields = [
   ["firstNotice", "select"],
   ["notes", "text"]
 ];
+
+const fieldLabels = {
+  serviceDate: "Tebliğ tarihi", office: "İcra dairesi", caseNumber: "Dosya numarası",
+  amount: "Tutar", debtor: "Borçlu", debtorId: "TCKN / VKN", creditor: "Alacaklı",
+  iban: "IBAN", firstNotice: "89/1", notes: "Açıklama"
+};
 
 function clearDownload() {
   downloadPanel.hidden = true;
@@ -100,11 +108,18 @@ function showResponseDownloads(payload) {
   responseDownloadLabel.textContent = `${files.length} PDF hazır.`;
   responseDownloads.replaceChildren();
   for (const file of files) {
+    const item = document.createElement("div");
+    item.className = "download-item";
+    const name = document.createElement("span");
+    name.textContent = file.filename;
     const link = document.createElement("a");
     link.href = file.downloadUrl;
     link.download = file.filename;
-    link.textContent = file.filename;
-    responseDownloads.append(link);
+    link.className = "download-link";
+    link.textContent = "PDF indir";
+    link.setAttribute("aria-label", `${file.filename} PDF indir`);
+    item.append(name, link);
+    responseDownloads.append(item);
   }
   responseDownloadPanel.hidden = false;
 }
@@ -135,7 +150,9 @@ function cell(value) {
 }
 
 function editableCell(item, field, type) {
-  const td = document.createElement("td");
+  const td = document.createElement("div");
+  const label = document.createElement("label");
+  label.textContent = fieldLabels[field];
   const input = type === "select" ? document.createElement("select") : document.createElement("input");
   if (type === "select") {
     for (const value of ["Evet", "Hayır", "Belirsiz"]) {
@@ -150,9 +167,82 @@ function editableCell(item, field, type) {
   input.value = item.cells[field] || "";
   input.dataset.rowId = item.id;
   input.dataset.field = field;
-  input.addEventListener("input", () => markDirty(item.id));
-  td.append(input);
+  input.id = `edit-${item.id}-${field}`;
+  label.htmlFor = input.id;
+  input.addEventListener("input", () => {
+    markDirty(item.id);
+    const summary = tbody.querySelector(`tr[data-row-id="${CSS.escape(item.id)}"] [data-display="${field}"]`);
+    if (summary) summary.textContent = input.value || "—";
+  });
+  td.append(label, input);
   return td;
+}
+
+function pairedCell(primary, secondary, primaryField = "", secondaryField = "") {
+  const td = document.createElement("td");
+  const title = document.createElement("strong");
+  title.textContent = primary || "—";
+  title.dataset.display = primaryField;
+  const subtitle = document.createElement("span");
+  subtitle.className = "cell-secondary";
+  subtitle.textContent = secondary || "—";
+  subtitle.dataset.display = secondaryField;
+  td.append(title, subtitle);
+  return td;
+}
+
+function readOnlyDetail(label, value) {
+  const div = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const text = document.createElement("p");
+  text.textContent = value || "—";
+  div.append(title, text);
+  return div;
+}
+
+function rowDetails(item, editable) {
+  const detail = document.createElement("tr");
+  detail.className = "detail-row";
+  detail.id = `${editable ? "review" : "return"}-detail-${item.id}`;
+  detail.hidden = true;
+  const td = document.createElement("td");
+  td.colSpan = 7;
+  const fields = document.createElement("div");
+  fields.className = "detail-grid";
+  if (editable) {
+    for (const [field, type] of editableFields) fields.append(editableCell(item, field, type));
+    fields.append(readOnlyDetail("Muhatap", item.cells.recipient));
+  } else {
+    for (const [label, field] of [["Alacaklı", "creditor"], ["Muhatap", "recipient"], ["Muhasebe hücresi", "accountingInput"]]) {
+      fields.append(readOnlyDetail(label, item[field]));
+    }
+  }
+  const issues = document.createElement("div");
+  issues.className = "issues";
+  for (const [key, title, className] of [["warnings", "Uyarı", "warning"], ["blockers", "Blokaj", "blocker"]]) {
+    for (const text of item[key] || []) {
+      const p = document.createElement("p");
+      p.className = className;
+      p.textContent = `${title}: ${text}`;
+      issues.append(p);
+    }
+  }
+  if (!issues.childElementCount) issues.textContent = "Uyarı veya blokaj bulunmuyor.";
+  td.append(fields, issues);
+  detail.append(td);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "small-action secondary";
+  button.textContent = editable ? "Düzenle" : "Ayrıntılar";
+  button.setAttribute("aria-label", `${button.textContent}: ${item.cells?.debtor || item.debtor || "Dosya"}`);
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-controls", detail.id);
+  button.addEventListener("click", () => {
+    detail.hidden = !detail.hidden;
+    button.setAttribute("aria-expanded", String(!detail.hidden));
+  });
+  return { detail, button };
 }
 
 function markDirty(rowId) {
@@ -188,12 +278,15 @@ function updateButtons() {
   reloadButton.disabled = !hasBatch;
   saveButton.disabled = !hasBatch || !hasDirty;
   approveButton.disabled = !hasBatch || selectedIds().length === 0;
-  exportHamdataButton.disabled = !hasBatch || hasDirty;
-  exportHamdataAccountingButton.disabled = !hasBatch || hasDirty;
+  exportHamdataButton.disabled = !hasBatch || hasDirty || workbookBusy;
+  exportHamdataAccountingButton.disabled = !hasBatch || hasDirty || workbookBusy;
   reloadReturnButton.disabled = !currentReturnId;
   selectValidResponsesButton.disabled = !currentReturnId || !hasValidResponse;
   previewSelectedResponseButton.disabled = !currentReturnId || selectedResponses.length !== 1;
-  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile;
+  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile || responsesBusy;
+  document.querySelector("#responseSelectionStatus").textContent = selectedResponses.length
+    ? `${selectedResponses.length} dosya seçili.${hasProfile ? " PDF oluşturmaya hazır." : " Vekil adı ve adresini girin."}`
+    : "PDF oluşturmak için uygun satırları seçin ve vekil bilgilerini girin.";
   clearResponsePreviewButton.disabled = responsePreviewPanel.hidden;
 }
 
@@ -205,7 +298,7 @@ function renderRows(rows) {
     const row = document.createElement("tr");
     row.className = "empty";
     const td = cell("İnceleme satırı bulunamadı.");
-    td.colSpan = 14;
+    td.colSpan = 7;
     row.append(td);
     tbody.append(row);
     updateButtons();
@@ -219,6 +312,7 @@ function renderRows(rows) {
     selector.type = "checkbox";
     selector.value = item.id;
     selector.dataset.role = "select-row";
+    selector.setAttribute("aria-label", `${item.cells.debtor || "Dosya"} satırını seç`);
     selector.addEventListener("change", updateButtons);
     const selectCell = document.createElement("td");
     selectCell.append(selector);
@@ -228,24 +322,21 @@ function renderRows(rows) {
     approval.className = "approval";
     approval.textContent = item.approved ? "Onaylı" : "Onay bekliyor";
     status.append(approval);
+    const { detail, button } = rowDetails(item, true);
+    const action = document.createElement("td");
+    action.append(button);
+    const amount = cell(item.cells.amount);
+    const date = cell(item.cells.serviceDate);
+    amount.dataset.display = "amount";
+    date.dataset.display = "serviceDate";
     row.append(
       selectCell,
       status,
-      editableCell(item, "serviceDate", "text"),
-      editableCell(item, "office", "text"),
-      editableCell(item, "caseNumber", "text"),
-      editableCell(item, "amount", "text"),
-      editableCell(item, "debtor", "text"),
-      editableCell(item, "debtorId", "text"),
-      editableCell(item, "creditor", "text"),
-      editableCell(item, "iban", "text"),
-      editableCell(item, "firstNotice", "select"),
-      editableCell(item, "notes", "text"),
-      cell(item.cells.recipient),
-      cell([...(item.warnings || []), ...(item.blockers || [])].join("; "))
+      pairedCell(item.cells.debtor, item.cells.debtorId, "debtor", "debtorId"),
+      pairedCell(item.cells.caseNumber, item.cells.office, "caseNumber", "office"),
+      amount, date, action
     );
-    row.lastElementChild.className = "issues";
-    tbody.append(row);
+    tbody.append(row, detail);
   }
   updateButtons();
 }
@@ -270,7 +361,7 @@ function renderReturnRows(rows) {
     const row = document.createElement("tr");
     row.className = "empty";
     const td = cell("Muhasebe dönüş satırı bulunamadı.");
-    td.colSpan = 12;
+    td.colSpan = 7;
     row.append(td);
     returnRows.append(row);
     updateButtons();
@@ -284,6 +375,7 @@ function renderReturnRows(rows) {
     selector.type = "checkbox";
     selector.value = item.id;
     selector.dataset.role = "select-response";
+    selector.setAttribute("aria-label", `${item.debtor || "Dosya"} cevabını seç`);
     selector.disabled = item.status === "blocked";
     selector.addEventListener("change", updateButtons);
     const selectCell = document.createElement("td");
@@ -296,8 +388,12 @@ function renderReturnRows(rows) {
     preview.dataset.rowId = item.id;
     preview.disabled = item.status === "blocked";
     preview.addEventListener("click", () => previewResponse(item.id));
+    const { detail, button } = rowDetails(item, false);
     const previewCell = document.createElement("td");
-    previewCell.append(preview);
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    actions.append(preview, button);
+    previewCell.append(actions);
     const status = cell(labels[item.status] || item.status);
     status.className = "badge";
     const decisionText = item.decision === "var" || item.decision === "yok" ? item.decision.toUpperCase() : "—";
@@ -305,20 +401,14 @@ function renderReturnRows(rows) {
     decision.className = item.decision === "var" ? "decision-var" : item.decision === "yok" ? "decision-yok" : "decision-blocked";
     row.append(
       selectCell,
-      previewCell,
       status,
+      pairedCell(item.debtor, item.debtorId),
+      pairedCell(item.caseNumber, item.office),
       decision,
       cell(item.amount?.text || item.accountingInput || ""),
-      cell(item.debtor),
-      cell(item.debtorId),
-      cell(item.caseNumber),
-      cell(item.office),
-      cell(item.creditor),
-      cell(item.recipient),
-      cell([...(item.warnings || []), ...(item.blockers || [])].join("; "))
+      previewCell
     );
-    row.lastElementChild.className = "issues";
-    returnRows.append(row);
+    returnRows.append(row, detail);
   }
   updateButtons();
 }
@@ -333,7 +423,7 @@ async function loadReturn() {
   renderReturnRows(payload.rows || []);
   clearResponseDownloads();
   clearResponsePreview();
-  returnMessage.textContent = `Muhasebe dönüşü güncel. Return: ${payload.return.id}`;
+  returnMessage.textContent = "Muhasebe dönüş listesi güncel.";
   updateButtons();
 }
 
@@ -361,11 +451,21 @@ async function postJson(url, body = {}, expectedStatus = 200) {
 }
 
 async function generateWorkbook(kind) {
-  if (!currentBatchId) return;
+  if (!currentBatchId || workbookBusy) return;
   if (dirtyRows.size > 0) throw new Error("Excel oluşturmadan önce değişiklikleri kaydedin.");
-  const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`);
-  showDownload(payload);
-  message.textContent = `${payload.filename} oluşturuldu.`;
+  workbookBusy = true;
+  updateButtons();
+  clearDownload();
+  message.textContent = "Excel hazırlanıyor...";
+  try {
+    const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`);
+    showDownload(payload);
+    downloadWorkbook.click();
+    message.textContent = `${payload.filename} hazır. İndirme başlamazsa “Excel'i tekrar indir” bağlantısını kullanın.`;
+  } finally {
+    workbookBusy = false;
+    updateButtons();
+  }
 }
 
 form.addEventListener("submit", async (event) => {
@@ -386,7 +486,7 @@ form.addEventListener("submit", async (event) => {
     currentBatchId = payload.batch.id;
     setSummary(payload.summary);
     renderRows(payload.rows || []);
-    message.textContent = `${payload.batch.importedCount} belge işlendi. Batch: ${payload.batch.id}`;
+    message.textContent = `${payload.batch.importedCount} belge işlendi. Bilgileri inceleyip Excel dosyanızı oluşturabilirsiniz.`;
   } catch (error) {
     message.textContent = error.message;
   } finally {
@@ -466,7 +566,7 @@ returnForm.addEventListener("submit", async (event) => {
     renderReturnRows(payload.rows || []);
     clearResponseDownloads();
     clearResponsePreview();
-    returnMessage.textContent = `${payload.summary.total} satır eşleşti. Return: ${payload.return.id}`;
+    returnMessage.textContent = `${payload.summary.total} satır incelendi. PDF oluşturmak için uygun satırları seçin.`;
     updateButtons();
   } catch (error) {
     returnMessage.textContent = error.message;
@@ -581,6 +681,10 @@ if (returnForm) {
 }
 
 generateResponsesButton.addEventListener("click", async () => {
+  if (generateResponsesButton.disabled) return;
+  responsesBusy = true;
+  updateButtons();
+  returnMessage.textContent = "Cevap PDF'leri hazırlanıyor...";
   try {
     clearResponseDownloads();
     const rowIds = selectedResponseIds();
@@ -592,8 +696,12 @@ generateResponsesButton.addEventListener("click", async () => {
       }
     }, 201);
     showResponseDownloads(payload);
+    responseDownloadPanel.scrollIntoView({ block: "nearest" });
     returnMessage.textContent = `${(payload.files || []).length} PDF oluşturuldu.`;
   } catch (error) {
     returnMessage.textContent = error.message;
+  } finally {
+    responsesBusy = false;
+    updateButtons();
   }
 });

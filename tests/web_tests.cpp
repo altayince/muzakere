@@ -227,7 +227,10 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(page.body.contains("ZIP"));
     REQUIRE(page.body.contains("stage-import"));
     REQUIRE(page.body.contains("stage-accounting"));
-    REQUIRE(page.body.contains("stage-responses"));
+    REQUIRE_FALSE(page.body.contains("stage-responses"));
+    REQUIRE(page.body.count("class=\"stage\"") == 2);
+    REQUIRE(page.body.contains("reviewTableHint"));
+    REQUIRE(page.body.contains("returnTableHint"));
     REQUIRE(page.body.contains("previewSelectedResponse"));
     REQUIRE(page.body.contains("responsePreviewPanel"));
     REQUIRE(page.body.contains("clearResponsePreview"));
@@ -236,6 +239,9 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(script.status == 200);
     REQUIRE(script.body.contains("decision-blocked"));
     REQUIRE(script.body.contains("showResponseDownloads"));
+    REQUIRE(script.body.contains("downloadWorkbook.click()"));
+    REQUIRE(script.body.contains("rowDetails"));
+    REQUIRE(script.body.contains("aria-expanded"));
     REQUIRE(script.body.contains("previewResponse"));
     REQUIRE(script.body.contains("/preview"));
     REQUIRE(script.body.contains("method: \"POST\""));
@@ -253,6 +259,8 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(styles.status == 200);
     REQUIRE(styles.body.contains("preview-panel"));
     REQUIRE(styles.body.contains("response-workbench"));
+    REQUIRE(styles.body.contains("table-layout: fixed"));
+    REQUIRE(styles.body.contains("overflow: auto"));
 }
 
 TEST_CASE("Web ZIP import uses existing parser and serializes review rows", "[integration][web]") {

@@ -1,174 +1,67 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="tr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Muzakere</title>
+  <meta name="theme-color" content="#172b36">
+  <title>Müzakere · Hukuk çalışma alanı</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#stage-import">Çalışma alanına geç</a>
   <header class="topbar">
-    <div>
-      <p class="eyebrow">Muzakere Web</p>
-      <h1>Evraktan cevaba tek akış</h1>
-    </div>
-    <nav aria-label="Ana akış">
-      <a class="active" href="#stage-import">1. Evrak</a>
-      <a href="#stage-accounting">2. Muhasebe</a>
-      <a href="#stage-responses">3. Cevap</a>
-    </nav>
+    <a class="brand" href="#stage-import" aria-label="Müzakere ana sayfa"><span class="brand-mark" aria-hidden="true">M</span><span>MÜZAKERE<small>HUKUK ÇALIŞMA ALANI</small></span></a>
+    <span class="topbar-note">Evrak yönetimi &amp; cevap hazırlama</span>
   </header>
-
   <main>
-    <section id="stage-import" class="stage upload-panel" aria-labelledby="stageImportTitle">
-      <div class="stage-heading">
-        <p class="step-label">1. Evrakları yükle ve incele</p>
-        <h2 id="stageImportTitle">ZIP → inceleme satırları</h2>
-        <p>ZIP dosyasını yükle, çıkarılan satırları düzelt, kaydet ve gerekirse onayla. Excel oluşturma kaydedilmemiş değişiklik varken kapalı kalır.</p>
-      </div>
-      <form id="uploadForm">
-        <label for="zipFile">ZIP dosyası</label>
-        <div class="upload-row">
-          <input id="zipFile" name="file" type="file" accept=".zip,application/zip" required>
-          <button type="submit">Yükle ve incele</button>
-        </div>
+    <div class="page-heading"><div><p class="eyebrow">DOSYA İŞLEMLERİ</p><h1>Her dosya, düzenli bir süreç.</h1><p>Evrakları inceleyin, muhasebe dönüşünü alın ve cevaplarınızı hazırlayın.</p></div><span class="workspace-label">Çalışma alanı</span></div>
+    <nav class="workflow-nav" aria-label="İşlem aşamaları">
+      <a href="#stage-import"><span class="step-number">01</span><span>Evrak &amp; Excel<small>İnceleme ve muhasebeye gönderim</small></span><span aria-hidden="true">↗</span></a>
+      <a href="#stage-accounting"><span class="step-number">02</span><span>Muhasebe &amp; Cevap<small>Dönüş, önizleme ve PDF indirme</small></span><span aria-hidden="true">↗</span></a>
+    </nav>
+    <section id="stage-import" class="stage" aria-labelledby="stageImportTitle">
+      <div class="stage-heading"><div><p class="eyebrow">01 / EVRAK &amp; EXCEL</p><h2 id="stageImportTitle">Evrakları inceleyin</h2><p>ZIP dosyanızı yükleyin. Bilgileri kontrol edip düzeltmeleri kaydedin, ardından Excel dosyanızı indirin.</p></div><span class="stage-tag">Muhasebeye gönderim</span></div>
+      <form id="uploadForm" class="upload-panel">
+        <div><label for="zipFile">Tebligat evrakları</label><p class="hint">PDF evraklarını içeren ZIP dosyasını seçin.</p></div>
+        <div class="upload-row"><input id="zipFile" name="file" type="file" accept=".zip,application/zip" required><button type="submit">Yükle ve incele</button></div>
       </form>
-      <div class="review-actions">
-        <button id="reloadReview" type="button" disabled>Yenile</button>
-        <button id="saveChanges" type="button" disabled>Değişiklikleri kaydet</button>
-        <button id="approveRows" type="button" disabled>Seçilenleri onayla</button>
-        <button id="exportHamdata" type="button" disabled>HAMDATA oluştur</button>
-        <button id="exportHamdataAccounting" type="button" disabled>HAMDATA + MUHASEBE oluştur</button>
+      <div class="summary" aria-live="polite" aria-label="İnceleme özeti">
+        <div><span>Toplam dosya</span><strong id="total">0</strong></div><div class="stat-ready"><span>Sorunsuz</span><strong id="ready">0</strong></div><div class="stat-review"><span>İnceleme gerekli</span><strong id="review">0</strong></div><div class="stat-blocked"><span>Blokaj</span><strong id="blocked">0</strong></div><div><span>Onaylı</span><strong id="approved">0</strong></div>
       </div>
-      <div id="downloadPanel" class="download-panel" hidden>
-        <span id="downloadLabel"></span>
-        <a id="downloadWorkbook" href="#" download>Excel'i indir</a>
+      <div class="table-heading"><div><h3>İnceleme listesi</h3><p id="reviewTableHint" class="hint">Tüm alanlara “Düzenle” ile ulaşabilirsiniz. Küçük ekranlarda tabloyu yana kaydırın.</p></div><button id="reloadReview" type="button" class="secondary" disabled>Listeyi yenile</button></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="İnceleme satırları" aria-describedby="reviewTableHint">
+        <table class="review-table"><caption class="sr-only">Evrak inceleme listesi. Düzenle düğmesi tüm alanları açar.</caption><colgroup><col class="select-col"><col class="status-col"><col><col><col class="amount-col"><col class="date-col"><col class="action-col"></colgroup>
+          <thead><tr><th scope="col">Seç</th><th scope="col">Durum</th><th scope="col">Borçlu / TCKN-VKN</th><th scope="col">Dosya / İcra dairesi</th><th scope="col">Tutar</th><th scope="col">Tebliğ tarihi</th><th scope="col">İşlem</th></tr></thead>
+          <tbody id="rows"><tr class="empty"><td colspan="7"><strong>İnceleme listeniz burada görünecek.</strong>Başlamak için yukarıdan bir ZIP dosyası yükleyin.</td></tr></tbody>
+        </table>
       </div>
-      <p id="message" role="status" aria-live="polite"></p>
+      <div class="action-bar"><div class="review-actions"><button id="saveChanges" type="button" disabled>Değişiklikleri kaydet</button><button id="approveRows" type="button" class="secondary" disabled>Seçilenleri onayla</button></div><p class="hint">Kaydetme ve onay ayrı işlemlerdir.</p></div>
+      <div class="export-panel"><div><h3>Excel dosyanızı indirin</h3><p class="hint">Muhasebeye göndermek için HAMDATA + MUHASEBE seçin. Önce değişikliklerinizi kaydedin.</p></div><div class="review-actions"><button id="exportHamdata" type="button" class="secondary" disabled>HAMDATA oluştur ve indir</button><button id="exportHamdataAccounting" type="button" disabled>HAMDATA + MUHASEBE oluştur ve indir</button></div></div>
+      <div id="downloadPanel" class="download-panel" hidden><span id="downloadLabel"></span><a id="downloadWorkbook" href="#" download>Excel'i tekrar indir</a></div>
+      <p id="message" class="status-message" role="status" aria-live="polite"></p>
     </section>
-
-    <section class="summary" aria-live="polite" aria-label="İnceleme özeti">
-      <div><strong id="total">0</strong><span>Toplam</span></div>
-      <div><strong id="ready">0</strong><span>Sorunsuz</span></div>
-      <div><strong id="review">0</strong><span>İnceleme</span></div>
-      <div><strong id="blocked">0</strong><span>Blokaj</span></div>
-      <div><strong id="approved">0</strong><span>Onaylı</span></div>
+    <section id="stage-accounting" class="stage" aria-labelledby="stageAccountingTitle">
+      <div class="stage-heading"><div><p class="eyebrow">02 / MUHASEBE &amp; CEVAP</p><h2 id="stageAccountingTitle">Cevaplarınızı hazırlayın</h2><p>Muhasebenin doldurduğu Excel'i yükleyin. Sonuçları inceleyin, uygun satırlar için VAR / YOK cevap PDF'lerini oluşturun.</p></div><span class="stage-tag">Muhasebeden dönüş</span></div>
+      <form id="returnForm" class="upload-panel"><div><label for="returnFile">Muhasebe dönüş dosyası</label><p class="hint">Doldurulmuş HAMDATA / MUHASEBE çalışma kitabı (.xlsx).</p></div><div class="upload-row"><input id="returnFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><button type="submit">Yükle ve eşleştir</button></div></form>
+      <div class="summary return-summary" aria-live="polite" aria-label="Muhasebe dönüşü özeti"><div><span>Toplam dosya</span><strong id="returnTotal">0</strong></div><div class="stat-ready"><span>VAR</span><strong id="returnVar">0</strong></div><div><span>YOK</span><strong id="returnYok">0</strong></div><div class="stat-review"><span>Uyarı</span><strong id="returnReview">0</strong></div><div class="stat-blocked"><span>Blokaj</span><strong id="returnBlocked">0</strong></div></div>
+      <div class="table-heading"><div><h3>Muhasebe dönüş listesi</h3><p id="returnTableHint" class="hint">Blokajlı satırlar için cevap oluşturulamaz. Ayrıntılardan uyarıları inceleyebilirsiniz.</p></div><button id="reloadReturn" type="button" class="secondary" disabled>Listeyi yenile</button></div>
+      <div class="table-wrap return-table" tabindex="0" role="region" aria-label="Muhasebe dönüş satırları" aria-describedby="returnTableHint">
+        <table><caption class="sr-only">Muhasebe sonuçları ve cevap işlemleri</caption><colgroup><col class="select-col"><col class="status-col"><col><col><col class="decision-col"><col class="amount-col"><col class="response-action-col"></colgroup>
+          <thead><tr><th scope="col">Seç</th><th scope="col">Durum</th><th scope="col">Borçlu / TCKN-VKN</th><th scope="col">Dosya / İcra dairesi</th><th scope="col">VAR / YOK</th><th scope="col">Dönen tutar</th><th scope="col">İşlemler</th></tr></thead>
+          <tbody id="returnRows"><tr class="empty"><td colspan="7"><strong>Muhasebe sonuçları burada görünecek.</strong>Dönen Excel dosyasını yükleyerek devam edin.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="response-workbench">
+        <div class="profile-heading"><div><h3>Cevap belgelerinde kullanılacak bilgiler</h3><p class="hint">Önizleme ve PDF, aşağıdaki güncel bilgileri kullanır. Sonraki işlemler için bilgilerinizi kaydedebilirsiniz.</p></div><button id="saveResponseProfile" type="button" class="secondary">Vekil bilgilerini kaydet</button></div>
+        <div class="profile-grid"><div><label for="responseLawyer">Vekil adı</label><input id="responseLawyer" type="text" autocomplete="name" placeholder="Av. Ad Soyad"></div><div><label for="responseAddress">Vekil adresi</label><textarea id="responseAddress" rows="2" placeholder="Tebligat adresi"></textarea></div></div>
+        <div class="action-bar"><div class="review-actions"><button id="selectValidResponses" type="button" class="secondary" disabled>Uygun satırları seç</button><button id="previewSelectedResponse" type="button" class="secondary" disabled>Seçili satırı önizle</button><button id="generateResponses" type="button" disabled>Seçili satırlardan PDF oluştur</button></div><p id="responseSelectionStatus" class="hint" aria-live="polite">PDF oluşturmak için uygun satırları seçin ve vekil bilgilerini girin.</p></div>
+        <div id="responsePreviewPanel" class="preview-panel" hidden><div class="preview-header"><div><p class="eyebrow">CEVAP ÖNİZLEMESİ</p><h3 id="responsePreviewTitle">Seçili satır</h3></div><button id="clearResponsePreview" type="button" class="secondary" disabled>Önizlemeyi kapat</button></div><p id="responsePreviewStatus" role="status" aria-live="polite"></p><iframe id="responsePreviewFrame" title="Cevap HTML önizlemesi" sandbox=""></iframe></div>
+        <div id="responseDownloadPanel" class="download-panel generated-panel" hidden><div><p class="eyebrow">CEVAP BELGELERİ</p><h3 id="responseDownloadLabel"></h3><p class="hint">Her dosyanın yanındaki PDF indir düğmesini kullanın.</p></div><div id="responseDownloads" class="download-list" aria-label="Oluşturulan PDF indirmeleri"></div></div>
+      </div>
+      <p id="returnMessage" class="status-message" role="status" aria-live="polite"></p>
     </section>
-
-    <section class="table-wrap" aria-label="İnceleme satırları">
-      <table>
-        <thead>
-          <tr>
-            <th>Seç</th>
-            <th>Durum</th>
-            <th>Tebliğ</th>
-            <th>İcra dairesi</th>
-            <th>Dosya</th>
-            <th>Tutar</th>
-            <th>Borçlu</th>
-            <th>TCKN/VKN</th>
-            <th>Alacaklı</th>
-            <th>İBAN</th>
-            <th>89/1</th>
-            <th>Açıklama</th>
-            <th>Muhatap</th>
-            <th>Uyarı</th>
-          </tr>
-        </thead>
-        <tbody id="rows">
-          <tr class="empty"><td colspan="14">Henüz ZIP yüklenmedi.</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-
-    <section id="stage-accounting" class="stage upload-panel return-panel" aria-labelledby="stageAccountingTitle">
-      <div class="stage-heading">
-        <p class="step-label">2. Muhasebe dosyasını oluştur / dönüşü yükle</p>
-        <h2 id="stageAccountingTitle">HAMDATA + MUHASEBE → dönüş dosyası</h2>
-        <p>İlk bölümde oluşturduğun MUHASEBE dosyası geri geldiğinde burada yükle. VAR/YOK durumu ve blokajlar C++ çekirdek tarafından hesaplanır.</p>
-      </div>
-      <form id="returnForm">
-        <label for="returnFile">Muhasebe dönüşü XLSX</label>
-        <div class="upload-row">
-          <input id="returnFile" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
-          <button type="submit">Dönüşü yükle ve eşleştir</button>
-        </div>
-      </form>
-      <div class="profile-grid">
-        <label for="responseLawyer">Vekil</label>
-        <input id="responseLawyer" type="text" autocomplete="off" placeholder="Av. Ad Soyad">
-        <label for="responseAddress">Adres</label>
-        <textarea id="responseAddress" rows="2" placeholder="Vekil adresi"></textarea>
-      </div>
-      <div class="review-actions">
-        <button id="reloadReturn" type="button" disabled>Dönüşü yenile</button>
-        <button id="selectValidResponses" type="button" disabled>Uygun satırları seç</button>
-        <button id="previewSelectedResponse" type="button" disabled>Seçili satırı önizle</button>
-        <button id="saveResponseProfile" type="button">Profili kaydet</button>
-      </div>
-      <p id="returnMessage" role="status" aria-live="polite"></p>
-    </section>
-
-    <section class="summary return-summary" aria-live="polite" aria-label="Muhasebe dönüşü özeti">
-      <div><strong id="returnTotal">0</strong><span>Toplam</span></div>
-      <div><strong id="returnVar">0</strong><span>VAR</span></div>
-      <div><strong id="returnYok">0</strong><span>YOK</span></div>
-      <div><strong id="returnReview">0</strong><span>Uyarı</span></div>
-      <div><strong id="returnBlocked">0</strong><span>Blokaj</span></div>
-    </section>
-
-    <section class="table-wrap return-table" aria-label="Muhasebe dönüş satırları">
-      <table>
-        <thead>
-          <tr>
-            <th>Seç</th>
-            <th>Önizle</th>
-            <th>Durum</th>
-            <th>VAR/YOK</th>
-            <th>Dönen değer</th>
-            <th>Borçlu</th>
-            <th>TCKN/VKN</th>
-            <th>Dosya</th>
-            <th>İcra dairesi</th>
-            <th>Alacaklı</th>
-            <th>Muhatap</th>
-            <th>Uyarı / Blokaj</th>
-          </tr>
-        </thead>
-        <tbody id="returnRows">
-          <tr class="empty"><td colspan="12">Henüz muhasebe dönüşü yüklenmedi.</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section id="stage-responses" class="stage response-workbench" aria-labelledby="stageResponsesTitle">
-      <div class="stage-heading">
-        <p class="step-label">3. VAR/YOK cevaplarını oluştur</p>
-        <h2 id="stageResponsesTitle">Önizle → PDF üret → indir</h2>
-        <p>Uygun satırları seç, gerekirse tek satır önizle, ardından seçili VAR/YOK cevap PDF'lerini oluştur.</p>
-      </div>
-      <div class="review-actions">
-        <button id="generateResponses" type="button" disabled>Seçili cevap PDF'lerini oluştur</button>
-        <button id="clearResponsePreview" type="button" disabled>Önizlemeyi kapat</button>
-      </div>
-      <div id="responsePreviewPanel" class="preview-panel" hidden>
-        <div class="preview-header">
-          <div>
-            <p class="eyebrow">Cevap önizleme</p>
-            <h3 id="responsePreviewTitle">Seçili satır</h3>
-          </div>
-        </div>
-        <p id="responsePreviewStatus" role="status" aria-live="polite"></p>
-        <iframe id="responsePreviewFrame" title="Cevap HTML önizlemesi" sandbox=""></iframe>
-      </div>
-      <div id="responseDownloadPanel" class="download-panel generated-panel" hidden>
-        <strong id="responseDownloadLabel"></strong>
-        <div id="responseDownloads" class="download-list" aria-label="Oluşturulan PDF indirmeleri"></div>
-      </div>
-    </section>
+    <footer>MÜZAKERE <span>Evraktan cevaba, tek çalışma alanı.</span></footer>
   </main>
-
   <script src="/app.js"></script>
 </body>
 </html>

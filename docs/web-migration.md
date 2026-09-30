@@ -125,6 +125,19 @@ Implemented in MUZ-27:
 - stale response preview/download state is cleared when a new ZIP or accounting return flow starts
 - static web asset tests for preview wiring, valid-row selection and stale-state cleanup hooks
 
+Implemented in MUZ-29:
+
+- two-stage legal workspace: document review/Excel downloads, then accounting return/response PDFs
+- compact tables with expandable, labelled editors/details; all existing review fields remain available
+- bounded keyboard-scrollable table regions with sticky headers on small screens
+- workbook generation starts the Excel download directly and retains a retry link
+- response preview, profile, selection, PDF generation and per-file download actions live in stage 2
+
+Browser interaction/layout regressions can be run with Python Playwright and Chromium:
+install with `python -m pip install playwright` and `python -m playwright install chromium`,
+then run `python tests/web_ui_test.py`. This uses synthetic API responses and local assets;
+the C++ tests continue to cover real export, persistence and response generation.
+
 Not implemented yet:
 - authentication and authorization
 - cloud object/database storage

@@ -105,11 +105,14 @@ the desktop app available. Start the headless server after a normal build:
 ./build/dev/muzakere_server --workspace /tmp/muz-web --host 127.0.0.1 --port 8080
 ```
 
-Open `http://127.0.0.1:8080/` to run the three-stage web workflow:
+Open `http://127.0.0.1:8080/` to run the two-stage web workflow:
 
-1. upload a ZIP, review/edit/save extracted rows, and export HAMDATA or HAMDATA + MUHASEBE;
-2. upload the returned MUHASEBE workbook and inspect VAR/YOK, warnings and blockers;
-3. save lawyer/address details, preview eligible responses through the existing C++ template path, generate selected VAR/YOK PDFs and download each PDF.
+1. upload a ZIP, open **Düzenle** for all review fields, save corrections, and download HAMDATA or HAMDATA + MUHASEBE directly;
+2. upload the returned workbook, inspect VAR/YOK and row details, enter lawyer/address, select eligible rows, preview responses, generate PDFs and use each **PDF indir** action.
+
+Both lists use compact tables with expandable details and scrolling contained
+inside the table on smaller screens. Preview and PDF generation use the current
+lawyer/address form values; saving the profile remains a separate action.
 
 The web server remains a thin adapter over the C++ workspace/domain logic. The
 browser does not implement accounting matching, approval, VAR/YOK, response text
