@@ -3,6 +3,7 @@
 #include "qt_paths.hpp"
 
 #include <QFile>
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -169,6 +170,21 @@ QJsonObject accounting_return_json(const AccountingReturn& item, const std::vect
         }},
         {"rows", row_items}
     };
+}
+
+QJsonObject profile_json(const ResponseProfile& profile) {
+    return {
+        {"lawyer", text(profile.lawyer)},
+        {"address", text(profile.address)}
+    };
+}
+
+bool profile_from_json(const QJsonObject& object, ResponseProfile& profile) {
+    const auto value = object.value("profile");
+    const auto source = value.isObject() ? value.toObject() : object;
+    if (!source.value("lawyer").isString() || !source.value("address").isString()) return false;
+    profile = {source.value("lawyer").toString().toStdString(), source.value("address").toString().toStdString()};
+    return true;
 }
 
 QJsonObject row_json(const AccountingRow& row) {
@@ -417,9 +433,43 @@ void WebServer::handle(QTcpSocket* socket, const Request& request) {
         respond(socket, status, import_accounting_return(request, status));
         return;
     }
+    if (segments.size() == 2 && segments[0] == "api" && segments[1] == "response-profile") {
+        int status = 200;
+        if (request.method == "GET") respond(socket, status, response_profile_state(status));
+        else if (request.method == "POST") respond(socket, status, save_response_profile(request, status));
+        else respond(socket, 405, json(error_body("method_not_allowed", "Method is not supported.")));
+        return;
+    }
     if (segments.size() == 3 && segments[0] == "api" && segments[1] == "accounting-returns" && request.method == "GET") {
         int status = 200;
         respond(socket, status, accounting_return_state(segments[2], status));
+        return;
+    }
+    if (segments.size() == 6 && segments[0] == "api" && segments[1] == "accounting-returns" &&
+        segments[3] == "responses" && segments[5] == "preview" && request.method == "GET") {
+        int status = 200;
+        respond(socket, status, preview_response(segments[2], segments[4], status));
+        return;
+    }
+    if (segments.size() == 4 && segments[0] == "api" && segments[1] == "accounting-returns" &&
+        segments[3] == "response-exports" && request.method == "POST") {
+        int status = 200;
+        respond(socket, status, create_response_export(segments[2], request, status));
+        return;
+    }
+    if (segments.size() == 3 && segments[0] == "api" && segments[1] == "response-exports" &&
+        request.method == "GET") {
+        int status = 200;
+        respond(socket, status, response_export_state(segments[2], status));
+        return;
+    }
+    if (segments.size() == 5 && segments[0] == "api" && segments[1] == "response-exports" &&
+        segments[3] == "files" && request.method == "GET") {
+        int status = 200;
+        QByteArray content_type;
+        std::vector<Header> headers;
+        const auto body = download_response_file(segments[2], segments[4], status, content_type, headers);
+        respond(socket, status, body, content_type.isEmpty() ? QByteArray("application/json") : content_type, headers);
         return;
     }
     if (request.method == "POST" && request.path == "/api/imports") {
@@ -718,6 +768,178 @@ QByteArray WebServer::accounting_return_state(const QString& return_id, int& sta
         status = 500;
         return json(error_body("return_load_failed", "Accounting return state could not be loaded."));
     }
+}
+
+QByteArray WebServer::response_profile_state(int& status) const {
+    try {
+        status = 200;
+        return json({{"profile", profile_json(workspace_.response_profile())}});
+    } catch (const Error&) {
+        status = 500;
+        return json(error_body("profile_load_failed", "Response profile could not be loaded."));
+    }
+}
+
+QByteArray WebServer::save_response_profile(const Request& request, int& status) const {
+    try {
+        const auto payload = parse_json_object(request.body);
+        ResponseProfile profile;
+        if (!payload || !profile_from_json(*payload, profile)) {
+            status = 400;
+            return json(error_body("bad_payload", "Profile with lawyer and address is required."));
+        }
+        workspace_.save_response_profile(profile);
+        status = 200;
+        return json({{"profile", profile_json(workspace_.response_profile())}});
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("profile_save_failed", "Response profile could not be saved."));
+    }
+}
+
+QByteArray WebServer::preview_response(const QString& return_id, const QString& row_id, int& status) const {
+    try {
+        const auto id = return_id.toStdString();
+        const auto rows = workspace_.response_rows(id);
+        const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
+            return row.id == row_id.toStdString();
+        });
+        if (found == rows.end()) {
+            status = 404;
+            return json(error_body("row_not_found", "Response row was not found."));
+        }
+        status = 200;
+        return json({{"html", text(workspace_.preview_response(*found, workspace_.response_profile()))}});
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("preview_failed", "Response preview could not be generated."));
+    }
+}
+
+QByteArray WebServer::response_export_state(const QString& export_id, int& status) const {
+    std::string id = export_id.toStdString();
+    ResponseExportSet data;
+    {
+        std::lock_guard guard(export_mutex_);
+        const auto found = response_exports_.find(id);
+        if (found == response_exports_.end()) {
+            status = 404;
+            return json(error_body("response_export_not_found", "Response export was not found."));
+        }
+        data = found->second;
+    }
+    QJsonArray files;
+    for (const auto& file : data.files) {
+        files.append(QJsonObject{
+            {"id", text(file.id)},
+            {"filename", file.filename},
+            {"downloadUrl", QStringLiteral("/api/response-exports/%1/files/%2").arg(export_id, text(file.id))}
+        });
+    }
+    status = 200;
+    return json({{"exportId", export_id}, {"returnId", text(data.return_id)}, {"files", files}});
+}
+
+QByteArray WebServer::create_response_export(const QString& return_id, const Request& request, int& status) const {
+    try {
+        const auto payload = parse_json_object(request.body);
+        if (!payload || !payload->value("rowIds").isArray()) {
+            status = 400;
+            return json(error_body("bad_payload", "rowIds array is required."));
+        }
+        ResponseProfile profile;
+        if (!profile_from_json(*payload, profile)) {
+            status = 400;
+            return json(error_body("bad_payload", "Profile with lawyer and address is required."));
+        }
+        const auto id = return_id.toStdString();
+        const auto returns = workspace_.accounting_returns();
+        if (std::find_if(returns.begin(), returns.end(), [&](const auto& item) { return item.id == id; }) == returns.end()) {
+            status = 404;
+            return json(error_body("return_not_found", "Accounting return was not found."));
+        }
+        const auto rows = workspace_.response_rows(id);
+        std::vector<std::string> row_ids;
+        std::set<std::string> seen;
+        for (const auto& value : payload->value("rowIds").toArray()) {
+            if (!value.isString()) {
+                status = 400;
+                return json(error_body("bad_row_id", "Row id must be a string."));
+            }
+            const auto row_id = value.toString().toStdString();
+            if (row_id.empty() || !seen.insert(row_id).second) {
+                status = 400;
+                return json(error_body("bad_row_id", "Row id is missing or duplicated."));
+            }
+            const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto& row) { return row.id == row_id; });
+            if (found == rows.end()) {
+                status = 404;
+                return json(error_body("row_not_found", "Response row was not found."));
+            }
+            row_ids.push_back(row_id);
+        }
+        if (row_ids.empty()) {
+            status = 400;
+            return json(error_body("bad_payload", "At least one row id is required."));
+        }
+
+        const auto output = workspace_.generate_responses(id, row_ids, {}, profile);
+
+        ResponseExportSet registered;
+        registered.return_id = id;
+        QDir folder(qpath(output));
+        const auto names = folder.entryList({"*.pdf"}, QDir::Files, QDir::Name);
+        for (const auto& name : names) {
+            const auto file_id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+            registered.files.push_back({file_id, native_path(folder.absoluteFilePath(name)), name, "application/pdf"});
+        }
+        if (registered.files.empty()) throw Error(ErrorCode::file_io);
+        const auto export_id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        {
+            std::lock_guard guard(export_mutex_);
+            response_exports_.insert({export_id, registered});
+        }
+        auto body = response_export_state(QString::fromStdString(export_id), status);
+        if (status == 200) status = 201;
+        return body;
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("response_generation_failed", "Response PDFs could not be generated."));
+    }
+}
+
+QByteArray WebServer::download_response_file(const QString& export_id, const QString& file_id, int& status,
+        QByteArray& content_type, std::vector<Header>& headers) const {
+    ResponseExportFile selected;
+    {
+        std::lock_guard guard(export_mutex_);
+        const auto found = response_exports_.find(export_id.toStdString());
+        if (found == response_exports_.end()) {
+            status = 404;
+            content_type = "application/json";
+            return json(error_body("response_export_not_found", "Response export was not found."));
+        }
+        const auto file = std::find_if(found->second.files.begin(), found->second.files.end(), [&](const auto& item) {
+            return item.id == file_id.toStdString();
+        });
+        if (file == found->second.files.end()) {
+            status = 404;
+            content_type = "application/json";
+            return json(error_body("response_file_not_found", "Response file was not found."));
+        }
+        selected = *file;
+    }
+    QFile file(qpath(selected.path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        status = 500;
+        content_type = "application/json";
+        return json(error_body("response_download_failed", "Response PDF could not be read."));
+    }
+    status = 200;
+    content_type = selected.content_type;
+    headers.push_back({"Content-Disposition", QByteArray("attachment; filename=\"") + selected.filename.toUtf8() + "\""});
+    headers.push_back({"Cache-Control", "no-store"});
+    return file.readAll();
 }
 
 } // namespace muz

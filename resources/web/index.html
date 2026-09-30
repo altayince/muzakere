@@ -86,8 +86,21 @@
           <button type="submit">Donusu yukle ve eslestir</button>
         </div>
       </form>
+      <div class="profile-grid">
+        <label for="responseLawyer">Vekil</label>
+        <input id="responseLawyer" type="text" autocomplete="off" placeholder="Av. Ad Soyad">
+        <label for="responseAddress">Adres</label>
+        <textarea id="responseAddress" rows="2" placeholder="Vekil adresi"></textarea>
+      </div>
       <div class="review-actions">
         <button id="reloadReturn" type="button" disabled>Donusu yenile</button>
+        <button id="selectValidResponses" type="button" disabled>Uygun satirlari sec</button>
+        <button id="saveResponseProfile" type="button">Profili kaydet</button>
+        <button id="generateResponses" type="button" disabled>Secili PDFleri olustur</button>
+      </div>
+      <div id="responseDownloadPanel" class="download-panel" hidden>
+        <span id="responseDownloadLabel"></span>
+        <div id="responseDownloads" class="download-list"></div>
       </div>
       <p id="returnMessage" role="status"></p>
     </section>
@@ -104,6 +117,7 @@
       <table>
         <thead>
           <tr>
+            <th>Sec</th>
             <th>Durum</th>
             <th>VAR/YOK</th>
             <th>Donen deger</th>
@@ -117,7 +131,7 @@
           </tr>
         </thead>
         <tbody id="returnRows">
-          <tr class="empty"><td colspan="10">Henuz muhasebe donusu yuklenmedi.</td></tr>
+          <tr class="empty"><td colspan="11">Henuz muhasebe donusu yuklenmedi.</td></tr>
         </tbody>
       </table>
     </section>

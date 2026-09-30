@@ -225,10 +225,12 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     const auto page = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(server.port()))));
     REQUIRE(page.status == 200);
     REQUIRE(page.body.contains("ZIP"));
+    REQUIRE(page.body.contains("Secili PDFleri"));
 
     const auto script = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1/app.js").arg(server.port()))));
     REQUIRE(script.status == 200);
     REQUIRE(script.body.contains("decision-blocked"));
+    REQUIRE(script.body.contains("showResponseDownloads"));
     REQUIRE(script.body.contains(QByteArray("\xE2\x80\x94")));
 }
 
@@ -644,4 +646,214 @@ TEST_CASE("Web accounting return API rejects malformed uploads and unknown retur
         QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/00000000-0000-0000-0000-000000000000")
         .arg(server.port())), 404);
     REQUIRE(payload["error"].toObject()["code"].toString() == "return_not_found");
+}
+
+
+TEST_CASE("Web response profile preview export and PDF downloads use C++ workspace behavior", "[integration][web][response]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+
+    const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 4, 123.45));
+        REQUIRE(book.write(4, 4, 0));
+        REQUIRE(book.write(5, 4, -25.5));
+    });
+
+    QNetworkAccessManager network;
+    auto payload = upload_return(network, server.port(), workbook);
+    const auto return_id = payload["return"].toObject()["id"].toString();
+    const auto rows = payload["rows"].toArray();
+    REQUIRE(rows.size() == 5);
+    QJsonArray row_ids;
+    for (const auto& row : rows) row_ids.append(row.toObject()["id"].toString());
+
+    const QJsonObject profile{{"lawyer", "Av. WEB TEST"}, {"address", "WEB TEST ADRES"}};
+    auto profile_payload = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-profile").arg(server.port())),
+        {{"profile", profile}});
+    REQUIRE(profile_payload["profile"].toObject()["lawyer"].toString() == "Av. WEB TEST");
+    profile_payload = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-profile").arg(server.port())));
+    REQUIRE(profile_payload["profile"].toObject()["address"].toString() == "WEB TEST ADRES");
+
+    const auto first_row_id = rows[0].toObject()["id"].toString();
+    auto preview = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
+        .arg(server.port()).arg(return_id, first_row_id)));
+    REQUIRE(preview["html"].toString().contains("Av. WEB TEST"));
+    REQUIRE(preview["html"].toString().contains("TEST MUHATAP"));
+
+    auto created = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+        .arg(server.port()).arg(return_id)), {{"rowIds", row_ids}, {"profile", profile}}, 201);
+    REQUIRE(created["exportId"].toString().size() == 36);
+    REQUIRE(created["returnId"].toString() == return_id);
+    REQUIRE_FALSE(QJsonDocument(created).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+    const auto files = created["files"].toArray();
+    REQUIRE(files.size() == 5);
+    int var_count = 0;
+    int yok_count = 0;
+    for (const auto& value : files) {
+        const auto file = value.toObject();
+        REQUIRE(file["id"].toString().size() == 36);
+        REQUIRE(file["downloadUrl"].toString().startsWith("/api/response-exports/"));
+        REQUIRE_FALSE(file["downloadUrl"].toString().contains(temp.path()));
+        if (file["filename"].toString().endsWith("_VAR.pdf")) ++var_count;
+        if (file["filename"].toString().endsWith("_YOK.pdf")) ++yok_count;
+    }
+    REQUIRE(var_count == 4);
+    REQUIRE(yok_count == 1);
+
+    const auto export_id = created["exportId"].toString();
+    const auto state = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-exports/%2")
+        .arg(server.port()).arg(export_id)));
+    REQUIRE(state["files"].toArray().size() == files.size());
+
+    const auto first_file = files[0].toObject();
+    const auto download = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1%2")
+        .arg(server.port()).arg(first_file["downloadUrl"].toString()))));
+    REQUIRE(download.status == 200);
+    REQUIRE(download.content_type == "application/pdf");
+    REQUIRE(download.content_disposition.contains("attachment"));
+    REQUIRE(download.content_disposition.contains(first_file["filename"].toString().toUtf8()));
+    REQUIRE(download.body.startsWith("%PDF"));
+    const auto text = muz::extract_pdf(download.body);
+    REQUIRE(text.error.empty());
+    REQUIRE(text.text.contains("TEST MUHATAP"));
+    REQUIRE(text.text.contains("2026/"));
+}
+
+
+
+TEST_CASE("Web response PDFs are stored in durable workspace generated storage", "[integration][web][response]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    const auto workspace_root = temp.path() + "/workspace";
+    muz::LocalWorkspace workspace(muz::native_path(workspace_root));
+
+    QString return_id;
+    QString persisted_pdf;
+    QString download_url;
+    const QJsonObject profile{{"lawyer", "Av. WEB TEST"}, {"address", "WEB TEST ADRES"}};
+
+    {
+        muz::WebServer server(workspace);
+        REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+        const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+            REQUIRE(book.selectSheet("MUHASEBE"));
+            REQUIRE(book.write(2, 4, 123.45));
+        });
+        QNetworkAccessManager network;
+        auto payload = upload_return(network, server.port(), workbook);
+        return_id = payload["return"].toObject()["id"].toString();
+        QJsonArray row_ids;
+        row_ids.append(payload["rows"].toArray()[0].toObject()["id"].toString());
+
+        const auto created = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+            .arg(server.port()).arg(return_id)), {{"rowIds", row_ids}, {"profile", profile}}, 201);
+        REQUIRE_FALSE(QJsonDocument(created).toJson(QJsonDocument::Compact).contains(workspace_root.toUtf8()));
+        const auto file = created["files"].toArray()[0].toObject();
+        download_url = file["downloadUrl"].toString();
+        REQUIRE_FALSE(download_url.contains(workspace_root));
+
+        const auto download = request(network, QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:%1%2")
+            .arg(server.port()).arg(download_url))));
+        REQUIRE(download.status == 200);
+        REQUIRE(download.content_type == "application/pdf");
+        REQUIRE_FALSE(download.content_disposition.contains(workspace_root.toUtf8()));
+
+        const auto rows = workspace.response_rows(return_id.toStdString());
+        REQUIRE_FALSE(rows.empty());
+        persisted_pdf = QString::fromStdString(rows[0].output_pdf);
+        REQUIRE_FALSE(persisted_pdf.isEmpty());
+        const QFileInfo pdf_info(persisted_pdf);
+        REQUIRE(pdf_info.exists());
+        const auto durable_root = QFileInfo(workspace_root + "/generated/responses").canonicalFilePath();
+        REQUIRE_FALSE(durable_root.isEmpty());
+        const auto canonical_pdf = pdf_info.canonicalFilePath();
+        REQUIRE(canonical_pdf.startsWith(durable_root + '/', Qt::CaseInsensitive));
+    }
+
+    REQUIRE(QFileInfo::exists(persisted_pdf));
+    const auto persisted_rows = workspace.response_rows(return_id.toStdString());
+    REQUIRE_FALSE(persisted_rows.empty());
+    REQUIRE(QString::fromStdString(persisted_rows[0].output_pdf) == persisted_pdf);
+    REQUIRE(QFileInfo::exists(QString::fromStdString(persisted_rows[0].output_pdf)));
+
+    {
+        muz::WebServer server(workspace);
+        REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+        QNetworkAccessManager network;
+        const auto reloaded = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2")
+            .arg(server.port()).arg(return_id)));
+        REQUIRE(reloaded["rows"].toArray().size() > 0);
+        REQUIRE_FALSE(QJsonDocument(reloaded).toJson(QJsonDocument::Compact).contains(workspace_root.toUtf8()));
+    }
+
+    REQUIRE(QFileInfo::exists(persisted_pdf));
+}
+
+TEST_CASE("Web response export rejects blocked rows and malformed identifiers without leaking paths", "[integration][web][response]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(std::filesystem::path(temp.path().toStdString()) / "workspace");
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+    QNetworkAccessManager network;
+
+    const QJsonObject profile{{"lawyer", "Av. WEB TEST"}, {"address", "WEB TEST ADRES"}};
+    const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 4, 123.45));
+    });
+    auto payload = upload_return(network, server.port(), workbook);
+    const auto return_id = payload["return"].toObject()["id"].toString();
+    const auto valid_id = payload["rows"].toArray()[0].toObject()["id"].toString();
+
+    auto failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+        .arg(server.port()).arg(return_id)), {{"rowIds", QJsonArray{}}, {"profile", profile}}, 400);
+    REQUIRE(failed["error"].toObject()["code"].toString() == "bad_payload");
+
+    failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+        .arg(server.port()).arg(return_id)), {{"rowIds", QJsonArray{valid_id, valid_id}}, {"profile", profile}}, 400);
+    REQUIRE(failed["error"].toObject()["code"].toString() == "bad_row_id");
+
+    failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+        .arg(server.port()).arg(return_id)), {{"rowIds", QJsonArray{"missing-row"}}, {"profile", profile}}, 404);
+    REQUIRE(failed["error"].toObject()["code"].toString() == "row_not_found");
+
+    failed = post_json(network,
+        QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/00000000-0000-0000-0000-000000000000/response-exports")
+        .arg(server.port())), {{"rowIds", QJsonArray{valid_id}}, {"profile", profile}}, 404);
+    REQUIRE(failed["error"].toObject()["code"].toString() == "return_not_found");
+
+    failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+        .arg(server.port()).arg(return_id)), {{"rowIds", QJsonArray{valid_id}}, {"profile", QJsonObject{{"lawyer", ""}, {"address", ""}}}}, 400);
+    REQUIRE(failed["error"].toObject()["code"].toString() == "response_generation_failed");
+
+    const auto blocked_workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 1, "99999999999"));
+    });
+    payload = upload_return(network, server.port(), blocked_workbook);
+    const auto blocked_return_id = payload["return"].toObject()["id"].toString();
+    const auto blocked_id = payload["rows"].toArray()[0].toObject()["id"].toString();
+    REQUIRE(payload["rows"].toArray()[0].toObject()["status"].toString() == "blocked");
+    failed = post_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/response-exports")
+        .arg(server.port()).arg(blocked_return_id)), {{"rowIds", QJsonArray{blocked_id}}, {"profile", profile}}, 400);
+    REQUIRE(failed["error"].toObject()["code"].toString() == "response_generation_failed");
+    auto preview = get_json(network, QUrl(QStringLiteral("http://127.0.0.1:%1/api/accounting-returns/%2/responses/%3/preview")
+        .arg(server.port()).arg(blocked_return_id, blocked_id)), 400);
+    REQUIRE(preview["error"].toObject()["code"].toString() == "preview_failed");
+    REQUIRE_FALSE(QJsonDocument(failed).toJson(QJsonDocument::Compact).contains(temp.path().toUtf8()));
+
+    auto unknown = get_json(network,
+        QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-exports/00000000-0000-0000-0000-000000000000")
+        .arg(server.port())), 404);
+    REQUIRE(unknown["error"].toObject()["code"].toString() == "response_export_not_found");
+
+    unknown = get_json(network,
+        QUrl(QStringLiteral("http://127.0.0.1:%1/api/response-exports/00000000-0000-0000-0000-000000000000/files/00000000-0000-0000-0000-000000000000")
+        .arg(server.port())), 404);
+    REQUIRE(unknown["error"].toObject()["code"].toString() == "response_export_not_found");
 }
