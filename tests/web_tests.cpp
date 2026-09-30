@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <QBuffer>
+#include <QCoreApplication>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -16,6 +17,10 @@
 #include <QPdfWriter>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QElapsedTimer>
+#include <QRegularExpression>
 #include <QUuid>
 #include <xlsxcellformula.h>
 #include <xlsxdocument.h>
@@ -162,7 +167,7 @@ std::vector<muz::AccountingRow> response_rows_sample() {
         {"row-a2", "11111111111", "AYNI AD"},
         {"row-b", "22222222222", "AYNI AD"},
         {"row-c", "33333333333", "SIFIR BORCLU"},
-        {"row-d", "44444444444", "EKSI BORCLU"}
+        {"row-d", "44444444444", "EKSİ BORÇLU"}
     };
     int index = 1;
     for (const auto& [id, debtor_id, debtor_name] : data) {
@@ -210,6 +215,77 @@ QJsonObject upload_return(QNetworkAccessManager& network, quint16 port, const QB
 }
 } // namespace
 
+TEST_CASE("Standalone headless server exports workbooks and generates downloadable PDFs", "[integration][web][response][server-process]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    struct ChildServer {
+        QProcess process;
+        ~ChildServer() {
+            process.kill();
+            process.waitForFinished(5000);
+        }
+    } child;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.remove("QT_QPA_PLATFORM"); // Exercise the executable's headless default.
+    environment.remove("DISPLAY");
+    environment.remove("WAYLAND_DISPLAY");
+    environment.insert("QT_FORCE_STDERR_LOGGING", "1");
+    child.process.setProcessEnvironment(environment);
+    child.process.setProcessChannelMode(QProcess::MergedChannels);
+    auto executable = QCoreApplication::applicationDirPath() + "/muzakere_server";
+#ifdef Q_OS_WIN
+    executable += ".exe";
+#endif
+    child.process.start(executable, {"--workspace", temp.path() + "/workspace", "--port", "0"});
+    REQUIRE(child.process.waitForStarted(5000));
+    QByteArray output;
+    QElapsedTimer timer;
+    timer.start();
+    QRegularExpressionMatch match;
+    while (timer.elapsed() < 10000) {
+        child.process.waitForReadyRead(100);
+        output += child.process.readAll();
+        match = QRegularExpression("Muzakere HTTP port: (\\d+)").match(QString::fromUtf8(output));
+        if (match.hasMatch() || child.process.state() == QProcess::NotRunning) break;
+    }
+    INFO(output.constData());
+    REQUIRE(match.hasMatch());
+    const auto port = match.captured(1).toUShort();
+    const auto base = QStringLiteral("http://127.0.0.1:%1").arg(port);
+    QNetworkAccessManager network;
+    const auto batch = upload_review(network, port)["batch"].toObject()["id"].toString();
+    for (const auto* kind : {"hamdata", "hamdata-with-accounting"}) {
+        const auto result = post_json(network, QUrl(base + "/api/batches/" + batch + "/exports/" + kind), {}, 201);
+        const auto download = request(network, QNetworkRequest(QUrl(base + result["downloadUrl"].toString())));
+        REQUIRE(download.status == 200);
+        REQUIRE(download.body.startsWith("PK"));
+        REQUIRE(download.content_disposition.contains("attachment"));
+    }
+    const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 4, 123.45));
+    });
+    const auto imported = upload_return(network, port, workbook);
+    QJsonArray ids;
+    for (const auto& row : imported["rows"].toArray()) ids.append(row.toObject()["id"]);
+    const auto return_id = imported["return"].toObject()["id"].toString();
+    const auto exported = post_json(network, QUrl(base + "/api/accounting-returns/" + return_id + "/response-exports"),
+        {{"rowIds", ids}, {"profile", QJsonObject{{"lawyer", "Av. TEST"}, {"address", "TEST ADRES"}}}}, 201);
+    REQUIRE(exported["files"].toArray().size() == ids.size());
+    for (const auto& file : exported["files"].toArray()) {
+        const auto downloaded = request(network, QNetworkRequest(QUrl(base + file.toObject()["downloadUrl"].toString())));
+        REQUIRE(downloaded.status == 200);
+        REQUIRE(downloaded.body.startsWith("%PDF-"));
+        REQUIRE(downloaded.content_type == "application/pdf");
+        const auto text = muz::extract_pdf(downloaded.body);
+        REQUIRE(text.error.empty());
+        REQUIRE(text.text.contains("TEST MUHATAP"));
+        REQUIRE(text.text.contains("Av. TEST"));
+        REQUIRE(text.text.contains("2026/"));
+    }
+    REQUIRE(get_json(network, QUrl(base + "/health"))["status"].toString() == "ok");
+}
+
 TEST_CASE("Web server starts and answers health and static UI", "[integration][web]") {
     QTemporaryDir temp;
     REQUIRE(temp.isValid());
@@ -227,7 +303,10 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(page.body.contains("ZIP"));
     REQUIRE(page.body.contains("stage-import"));
     REQUIRE(page.body.contains("stage-accounting"));
-    REQUIRE(page.body.contains("stage-responses"));
+    REQUIRE_FALSE(page.body.contains("stage-responses"));
+    REQUIRE(page.body.count("class=\"stage\"") == 2);
+    REQUIRE(page.body.contains("reviewTableHint"));
+    REQUIRE(page.body.contains("returnTableHint"));
     REQUIRE(page.body.contains("previewSelectedResponse"));
     REQUIRE(page.body.contains("responsePreviewPanel"));
     REQUIRE(page.body.contains("clearResponsePreview"));
@@ -236,6 +315,9 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(script.status == 200);
     REQUIRE(script.body.contains("decision-blocked"));
     REQUIRE(script.body.contains("showResponseDownloads"));
+    REQUIRE(script.body.contains("saveDownload(payload.downloadUrl, payload.filename, handle)"));
+    REQUIRE(script.body.contains("rowDetails"));
+    REQUIRE(script.body.contains("aria-expanded"));
     REQUIRE(script.body.contains("previewResponse"));
     REQUIRE(script.body.contains("/preview"));
     REQUIRE(script.body.contains("method: \"POST\""));
@@ -253,6 +335,8 @@ TEST_CASE("Web server starts and answers health and static UI", "[integration][w
     REQUIRE(styles.status == 200);
     REQUIRE(styles.body.contains("preview-panel"));
     REQUIRE(styles.body.contains("response-workbench"));
+    REQUIRE(styles.body.contains("table-layout: fixed"));
+    REQUIRE(styles.body.contains("overflow: auto"));
 }
 
 TEST_CASE("Web ZIP import uses existing parser and serializes review rows", "[integration][web]") {
@@ -762,6 +846,75 @@ TEST_CASE("Web response profile preview export and PDF downloads use C++ workspa
 }
 
 
+
+TEST_CASE("Response ZIP contains exactly the selected original PDFs with UTF-8 names", "[integration][web][response]") {
+    QTemporaryDir temp;
+    REQUIRE(temp.isValid());
+    muz::LocalWorkspace workspace(muz::native_path(temp.path() + "/workspace"));
+    muz::WebServer server(workspace);
+    REQUIRE(server.listen(QHostAddress::LocalHost, 0));
+    const auto base = QStringLiteral("http://127.0.0.1:%1").arg(server.port());
+    QNetworkAccessManager network;
+    const auto workbook = returned_hamdata_workbook(temp, [](QXlsx::Document& book) {
+        REQUIRE(book.selectSheet("MUHASEBE"));
+        REQUIRE(book.write(2, 4, 123.45));
+    });
+    const auto imported = upload_return(network, server.port(), workbook);
+    const auto return_id = imported["return"].toObject()["id"].toString();
+    const auto rows = imported["rows"].toArray();
+    const QJsonArray selected{rows[0].toObject()["id"], rows[4].toObject()["id"]};
+    const auto exported = post_json(network, QUrl(base + "/api/accounting-returns/" + return_id + "/response-exports"),
+        {{"rowIds", selected}, {"profile", QJsonObject{{"lawyer", "Av. TEST"}, {"address", "TEST"}}}}, 201);
+    const auto archive = exported["archive"].toObject();
+    REQUIRE(archive["filename"].toString().endsWith(".zip"));
+    REQUIRE_FALSE(QJsonDocument(exported).toJson().contains(temp.path().toUtf8()));
+    const auto reloaded = get_json(network, QUrl(base + "/api/response-exports/" + exported["exportId"].toString()));
+    REQUIRE(reloaded["archive"].toObject() == archive);
+    const auto url = QUrl(base + archive["downloadUrl"].toString());
+    const auto downloaded = request(network, QNetworkRequest(url));
+    REQUIRE(downloaded.status == 200);
+    REQUIRE(downloaded.content_type == "application/zip");
+    REQUIRE(downloaded.content_disposition.contains(archive["filename"].toString().toUtf8()));
+    REQUIRE_FALSE(downloaded.content_disposition.contains(temp.path().toUtf8()));
+    struct Reader {
+        mz_zip_archive zip{};
+        ~Reader() { if (zip.m_pState) mz_zip_reader_end(&zip); }
+    } reader;
+    REQUIRE(mz_zip_reader_init_mem(&reader.zip, downloaded.body.constData(), static_cast<size_t>(downloaded.body.size()), 0));
+    REQUIRE(mz_zip_reader_get_num_files(&reader.zip) == 2);
+    bool unicode_name = false;
+    for (const auto& value : exported["files"].toArray()) {
+        const auto file = value.toObject();
+        const auto name = file["filename"].toString().toUtf8();
+        REQUIRE_FALSE(name.contains('/'));
+        REQUIRE_FALSE(name.contains('\\'));
+        const auto index = mz_zip_reader_locate_file(&reader.zip, name.constData(), nullptr, 0);
+        REQUIRE(index >= 0);
+        mz_zip_archive_file_stat stat{};
+        REQUIRE(mz_zip_reader_file_stat(&reader.zip, static_cast<mz_uint>(index), &stat));
+        REQUIRE((stat.m_bit_flag & (1 << 11)) != 0);
+        if (name.contains(QStringLiteral("BORÇLU").toUtf8())) unicode_name = true;
+        size_t size = 0;
+        const std::unique_ptr<void, decltype(&mz_free)> bytes(
+            mz_zip_reader_extract_to_heap(&reader.zip, static_cast<mz_uint>(index), &size, 0), &mz_free);
+        REQUIRE(bytes);
+        const auto original = request(network, QNetworkRequest(QUrl(base + file["downloadUrl"].toString())));
+        REQUIRE(original.status == 200);
+        REQUIRE(QByteArray(static_cast<const char*>(bytes.get()), static_cast<qsizetype>(size)) == original.body);
+    }
+    REQUIRE(unicode_name);
+    const auto unknown = get_json(network, QUrl(base + "/api/response-exports/unknown/download"), 404);
+    REQUIRE(unknown["error"].toObject()["code"] == "response_export_not_found");
+    // No partial ZIP should be served if one of the registered PDFs is missing.
+    const auto persisted = workspace.response_rows(return_id.toStdString());
+    const auto pdf_path = QString::fromStdString(persisted[0].output_pdf);
+    REQUIRE(QFile::remove(pdf_path));
+    const auto failed = request(network, QNetworkRequest(url));
+    REQUIRE(failed.status == 500);
+    REQUIRE(failed.content_type == "application/json");
+    REQUIRE_FALSE(failed.body.startsWith("PK"));
+    REQUIRE_FALSE(failed.body.contains(temp.path().toUtf8()));
+}
 
 TEST_CASE("Web response PDFs are stored in durable workspace generated storage", "[integration][web][response]") {
     QTemporaryDir temp;

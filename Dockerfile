@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     libqt6core6t64 \
     libqt6gui6 \
+    qt6-qpa-plugins \
     libqt6network6 \
     libqt6sql6 \
     libqt6sql6-sqlite \

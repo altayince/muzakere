@@ -154,7 +154,9 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
             catch(...){return Outcome{id,"unexpected_error"};}
         }));
     });
-    auto* changes = new QLabel(QStringLiteral("MUZ-23 - Web muhasebe donusu inceleme\n"
+    auto* changes = new QLabel(QStringLiteral("MUZ-29 — Web çalışma alanı\n"
+        "İki aşamalı arayüz, açılabilir tablo ayrıntıları, doğrudan Excel indirme ve seçili cevap PDF'lerini tek ZIP olarak kaydetme.\n\n"
+        "MUZ-23 - Web muhasebe donusu inceleme\n"
         "Tarayicidan donen HAMDATA/MUHASEBE Exceli yuklenir; VAR/YOK, uyari ve blokaj satirlari mevcut C++ eslestirme mantigiyla gosterilir.\n\n"
         "MUZ-21 - Web HAMDATA ve HAMDATA + MUHASEBE indirme\n"
         "Kaydedilmis batch icin tarayicidan HAMDATA veya HAMDATA + MUHASEBE Excel dosyasi olusturulup indirilebilir.\n\n"
@@ -171,11 +173,7 @@ MainWindow::MainWindow(Workspace& workspace) : workspace_(workspace) {
         "MUZ-7 — Test sıfırlama ve eski kayıtların tebliğ tarihi\n"
         "Test düğmesi veritabanını temizler. Eski boş tarihler bugünün tarihiyle doldurulur ve yeniden onay bekler.\n\n"
         "MUZ-5 — Geçici tebliğ tarihi\n"
-        "Yeni satırlarda bugünün tarihi kullanılır. KEP entegrasyonunda tarih KEP'ten alınacak.\n\n"
-        "MUZ-3 — ZIP import, PDF review and accounting Excel export\n"
-        "ZIP alımı, yerel PDF okuma, kaynak metinle toplu inceleme ve 11 sütunlu Excel çıktısı.\n\n"
-        "MUZ-1 — Desktop skeleton and document import milestone\n"
-        "Yerel klasör importu, SHA-256 arşivi, SQLite batch kayıtları ve inceleme listesi."), tabs);
+        "Yeni satırlarda bugünün tarihi kullanılır. KEP entegrasyonunda tarih KEP'ten alınacak."), tabs);
     changes->setWordWrap(true);
     changes->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     tabs->addTab(changes, QStringLiteral("Neler değişti?"));

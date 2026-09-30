@@ -35,6 +35,10 @@ let currentReturnId = "";
 let currentRows = [];
 let currentReturnRows = [];
 let currentPreviewRowId = "";
+let workbookBusy = false;
+let responsesBusy = false;
+let returnBusy = false;
+let returnGeneration = 0;
 const dirtyRows = new Set();
 
 const labels = {
@@ -56,6 +60,12 @@ const editableFields = [
   ["notes", "text"]
 ];
 
+const fieldLabels = {
+  serviceDate: "Tebliğ tarihi", office: "İcra dairesi", caseNumber: "Dosya numarası",
+  amount: "Tutar", debtor: "Borçlu", debtorId: "TCKN / VKN", creditor: "Alacaklı",
+  iban: "IBAN", firstNotice: "89/1", notes: "Açıklama"
+};
+
 function clearDownload() {
   downloadPanel.hidden = true;
   downloadLabel.textContent = "";
@@ -69,6 +79,64 @@ function showDownload(payload) {
   downloadWorkbook.download = payload.filename;
   downloadPanel.hidden = false;
 }
+
+// Invoke the picker during the click gesture, before generation/network awaits.
+// Browsers without File System Access keep their normal download behavior.
+async function chooseSaveFile(filename) {
+  if (!window.showSaveFilePicker) return null;
+  const pdf = filename.toLowerCase().endsWith(".pdf");
+  const zip = filename.toLowerCase().endsWith(".zip");
+  return window.showSaveFilePicker({
+    suggestedName: filename,
+    types: [{ description: zip ? "PDF arşivi" : pdf ? "PDF belgesi" : "Excel çalışma kitabı",
+      accept: zip ? { "application/zip": [".zip"] } : pdf ? { "application/pdf": [".pdf"] }
+        : { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }]
+  });
+}
+
+async function saveDownload(url, filename, handle) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error?.message || "Dosya indirilemedi. Tekrar deneyin.");
+  }
+  const blob = await response.blob();
+  if (handle) {
+    const writer = await handle.createWritable();
+    try {
+      await writer.write(blob);
+      await writer.close();
+    } catch (error) {
+      await writer.abort().catch(() => {});
+      throw error;
+    }
+  } else {
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  }
+}
+
+async function downloadFile(url, filename, status) {
+  try {
+    const handle = await chooseSaveFile(filename);
+    status.textContent = `${filename} indiriliyor...`;
+    await saveDownload(url, filename, handle);
+    status.textContent = handle ? `${filename} kaydedildi.` : `${filename} tarayıcı indirmelerine gönderildi.`;
+  } catch (error) {
+    status.textContent = error.name === "AbortError" ? "Kaydetme iptal edildi." : error.message;
+  }
+}
+
+downloadWorkbook.addEventListener("click", (event) => {
+  event.preventDefault();
+  downloadFile(downloadWorkbook.href, downloadWorkbook.download, message);
+});
 
 function clearResponseDownloads() {
   responseDownloadPanel.hidden = true;
@@ -86,6 +154,7 @@ function clearResponsePreview(statusText = "") {
 }
 
 function resetReturnWorkflow(statusText = "") {
+  ++returnGeneration;
   currentReturnId = "";
   currentReturnRows = [];
   setReturnSummary();
@@ -97,15 +166,18 @@ function resetReturnWorkflow(statusText = "") {
 
 function showResponseDownloads(payload) {
   const files = payload.files || [];
-  responseDownloadLabel.textContent = `${files.length} PDF hazır.`;
+  responseDownloadLabel.textContent = `${files.length} PDF · tek ZIP dosyası`;
   responseDownloads.replaceChildren();
-  for (const file of files) {
-    const link = document.createElement("a");
-    link.href = file.downloadUrl;
-    link.download = file.filename;
-    link.textContent = file.filename;
-    responseDownloads.append(link);
-  }
+  const link = document.createElement("a");
+  link.href = payload.archive.downloadUrl;
+  link.download = payload.archive.filename;
+  link.className = "download-link";
+  link.textContent = "ZIP'i tekrar indir";
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadFile(payload.archive.downloadUrl, payload.archive.filename, returnMessage);
+  });
+  responseDownloads.append(link);
   responseDownloadPanel.hidden = false;
 }
 
@@ -135,7 +207,9 @@ function cell(value) {
 }
 
 function editableCell(item, field, type) {
-  const td = document.createElement("td");
+  const td = document.createElement("div");
+  const label = document.createElement("label");
+  label.textContent = fieldLabels[field];
   const input = type === "select" ? document.createElement("select") : document.createElement("input");
   if (type === "select") {
     for (const value of ["Evet", "Hayır", "Belirsiz"]) {
@@ -150,9 +224,82 @@ function editableCell(item, field, type) {
   input.value = item.cells[field] || "";
   input.dataset.rowId = item.id;
   input.dataset.field = field;
-  input.addEventListener("input", () => markDirty(item.id));
-  td.append(input);
+  input.id = `edit-${item.id}-${field}`;
+  label.htmlFor = input.id;
+  input.addEventListener("input", () => {
+    markDirty(item.id);
+    const summary = tbody.querySelector(`tr[data-row-id="${CSS.escape(item.id)}"] [data-display="${field}"]`);
+    if (summary) summary.textContent = input.value || "—";
+  });
+  td.append(label, input);
   return td;
+}
+
+function pairedCell(primary, secondary, primaryField = "", secondaryField = "") {
+  const td = document.createElement("td");
+  const title = document.createElement("strong");
+  title.textContent = primary || "—";
+  title.dataset.display = primaryField;
+  const subtitle = document.createElement("span");
+  subtitle.className = "cell-secondary";
+  subtitle.textContent = secondary || "—";
+  subtitle.dataset.display = secondaryField;
+  td.append(title, subtitle);
+  return td;
+}
+
+function readOnlyDetail(label, value) {
+  const div = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const text = document.createElement("p");
+  text.textContent = value || "—";
+  div.append(title, text);
+  return div;
+}
+
+function rowDetails(item, editable) {
+  const detail = document.createElement("tr");
+  detail.className = "detail-row";
+  detail.id = `${editable ? "review" : "return"}-detail-${item.id}`;
+  detail.hidden = true;
+  const td = document.createElement("td");
+  td.colSpan = 7;
+  const fields = document.createElement("div");
+  fields.className = "detail-grid";
+  if (editable) {
+    for (const [field, type] of editableFields) fields.append(editableCell(item, field, type));
+    fields.append(readOnlyDetail("Muhatap", item.cells.recipient));
+  } else {
+    for (const [label, field] of [["Alacaklı", "creditor"], ["Muhatap", "recipient"], ["Muhasebe hücresi", "accountingInput"]]) {
+      fields.append(readOnlyDetail(label, item[field]));
+    }
+  }
+  const issues = document.createElement("div");
+  issues.className = "issues";
+  for (const [key, title, className] of [["warnings", "Uyarı", "warning"], ["blockers", "Blokaj", "blocker"]]) {
+    for (const text of item[key] || []) {
+      const p = document.createElement("p");
+      p.className = className;
+      p.textContent = `${title}: ${text}`;
+      issues.append(p);
+    }
+  }
+  if (!issues.childElementCount) issues.textContent = "Uyarı veya blokaj bulunmuyor.";
+  td.append(fields, issues);
+  detail.append(td);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "small-action secondary";
+  button.textContent = editable ? "Düzenle" : "Ayrıntılar";
+  button.setAttribute("aria-label", `${button.textContent}: ${item.cells?.debtor || item.debtor || "Dosya"}`);
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-controls", detail.id);
+  button.addEventListener("click", () => {
+    detail.hidden = !detail.hidden;
+    button.setAttribute("aria-expanded", String(!detail.hidden));
+  });
+  return { detail, button };
 }
 
 function markDirty(rowId) {
@@ -188,12 +335,23 @@ function updateButtons() {
   reloadButton.disabled = !hasBatch;
   saveButton.disabled = !hasBatch || !hasDirty;
   approveButton.disabled = !hasBatch || selectedIds().length === 0;
-  exportHamdataButton.disabled = !hasBatch || hasDirty;
-  exportHamdataAccountingButton.disabled = !hasBatch || hasDirty;
-  reloadReturnButton.disabled = !currentReturnId;
-  selectValidResponsesButton.disabled = !currentReturnId || !hasValidResponse;
-  previewSelectedResponseButton.disabled = !currentReturnId || selectedResponses.length !== 1;
-  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile;
+  exportHamdataButton.disabled = !hasBatch || hasDirty || workbookBusy;
+  exportHamdataAccountingButton.disabled = !hasBatch || hasDirty || workbookBusy;
+  reloadReturnButton.disabled = !currentReturnId || returnBusy || responsesBusy;
+  selectValidResponsesButton.disabled = !currentReturnId || !hasValidResponse || returnBusy || responsesBusy;
+  previewSelectedResponseButton.disabled = !currentReturnId || selectedResponses.length !== 1 || returnBusy || responsesBusy;
+  generateResponsesButton.disabled = !currentReturnId || selectedResponses.length === 0 || !hasProfile || responsesBusy || returnBusy;
+  returnForm.querySelector("button").disabled = returnBusy || responsesBusy;
+  for (const item of currentReturnRows) {
+    const row = returnRows.querySelector(`tr[data-row-id="${CSS.escape(item.id)}"]`);
+    if (!row) continue;
+    for (const action of row.querySelectorAll("input, [data-role=preview-response]")) {
+      action.disabled = item.status === "blocked" || returnBusy || responsesBusy;
+    }
+  }
+  document.querySelector("#responseSelectionStatus").textContent = selectedResponses.length
+    ? `${selectedResponses.length} dosya seçili.${hasProfile ? " PDF oluşturmaya hazır." : " Vekil adı ve adresini girin."}`
+    : "PDF oluşturmak için uygun satırları seçin ve vekil bilgilerini girin.";
   clearResponsePreviewButton.disabled = responsePreviewPanel.hidden;
 }
 
@@ -205,7 +363,7 @@ function renderRows(rows) {
     const row = document.createElement("tr");
     row.className = "empty";
     const td = cell("İnceleme satırı bulunamadı.");
-    td.colSpan = 14;
+    td.colSpan = 7;
     row.append(td);
     tbody.append(row);
     updateButtons();
@@ -219,6 +377,7 @@ function renderRows(rows) {
     selector.type = "checkbox";
     selector.value = item.id;
     selector.dataset.role = "select-row";
+    selector.setAttribute("aria-label", `${item.cells.debtor || "Dosya"} satırını seç`);
     selector.addEventListener("change", updateButtons);
     const selectCell = document.createElement("td");
     selectCell.append(selector);
@@ -228,24 +387,21 @@ function renderRows(rows) {
     approval.className = "approval";
     approval.textContent = item.approved ? "Onaylı" : "Onay bekliyor";
     status.append(approval);
+    const { detail, button } = rowDetails(item, true);
+    const action = document.createElement("td");
+    action.append(button);
+    const amount = cell(item.cells.amount);
+    const date = cell(item.cells.serviceDate);
+    amount.dataset.display = "amount";
+    date.dataset.display = "serviceDate";
     row.append(
       selectCell,
       status,
-      editableCell(item, "serviceDate", "text"),
-      editableCell(item, "office", "text"),
-      editableCell(item, "caseNumber", "text"),
-      editableCell(item, "amount", "text"),
-      editableCell(item, "debtor", "text"),
-      editableCell(item, "debtorId", "text"),
-      editableCell(item, "creditor", "text"),
-      editableCell(item, "iban", "text"),
-      editableCell(item, "firstNotice", "select"),
-      editableCell(item, "notes", "text"),
-      cell(item.cells.recipient),
-      cell([...(item.warnings || []), ...(item.blockers || [])].join("; "))
+      pairedCell(item.cells.debtor, item.cells.debtorId, "debtor", "debtorId"),
+      pairedCell(item.cells.caseNumber, item.cells.office, "caseNumber", "office"),
+      amount, date, action
     );
-    row.lastElementChild.className = "issues";
-    tbody.append(row);
+    tbody.append(row, detail);
   }
   updateButtons();
 }
@@ -270,7 +426,7 @@ function renderReturnRows(rows) {
     const row = document.createElement("tr");
     row.className = "empty";
     const td = cell("Muhasebe dönüş satırı bulunamadı.");
-    td.colSpan = 12;
+    td.colSpan = 7;
     row.append(td);
     returnRows.append(row);
     updateButtons();
@@ -284,6 +440,7 @@ function renderReturnRows(rows) {
     selector.type = "checkbox";
     selector.value = item.id;
     selector.dataset.role = "select-response";
+    selector.setAttribute("aria-label", `${item.debtor || "Dosya"} cevabını seç`);
     selector.disabled = item.status === "blocked";
     selector.addEventListener("change", updateButtons);
     const selectCell = document.createElement("td");
@@ -296,8 +453,12 @@ function renderReturnRows(rows) {
     preview.dataset.rowId = item.id;
     preview.disabled = item.status === "blocked";
     preview.addEventListener("click", () => previewResponse(item.id));
+    const { detail, button } = rowDetails(item, false);
     const previewCell = document.createElement("td");
-    previewCell.append(preview);
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
+    actions.append(preview, button);
+    previewCell.append(actions);
     const status = cell(labels[item.status] || item.status);
     status.className = "badge";
     const decisionText = item.decision === "var" || item.decision === "yok" ? item.decision.toUpperCase() : "—";
@@ -305,35 +466,31 @@ function renderReturnRows(rows) {
     decision.className = item.decision === "var" ? "decision-var" : item.decision === "yok" ? "decision-yok" : "decision-blocked";
     row.append(
       selectCell,
-      previewCell,
       status,
+      pairedCell(item.debtor, item.debtorId),
+      pairedCell(item.caseNumber, item.office),
       decision,
       cell(item.amount?.text || item.accountingInput || ""),
-      cell(item.debtor),
-      cell(item.debtorId),
-      cell(item.caseNumber),
-      cell(item.office),
-      cell(item.creditor),
-      cell(item.recipient),
-      cell([...(item.warnings || []), ...(item.blockers || [])].join("; "))
+      previewCell
     );
-    row.lastElementChild.className = "issues";
-    returnRows.append(row);
+    returnRows.append(row, detail);
   }
   updateButtons();
 }
 
 async function loadReturn() {
-  if (!currentReturnId) return;
+  if (!currentReturnId || returnBusy || responsesBusy) return;
+  const generation = returnGeneration;
   returnMessage.textContent = "Muhasebe dönüşü yenileniyor...";
   const response = await fetch(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}`);
   const payload = await response.json();
+  if (generation !== returnGeneration) return;
   if (!response.ok) throw new Error(payload.error?.message || "Muhasebe dönüşü alınamadı.");
   setReturnSummary(payload.summary);
   renderReturnRows(payload.rows || []);
   clearResponseDownloads();
   clearResponsePreview();
-  returnMessage.textContent = `Muhasebe dönüşü güncel. Return: ${payload.return.id}`;
+  returnMessage.textContent = "Muhasebe dönüş listesi güncel.";
   updateButtons();
 }
 
@@ -361,11 +518,27 @@ async function postJson(url, body = {}, expectedStatus = 200) {
 }
 
 async function generateWorkbook(kind) {
-  if (!currentBatchId) return;
+  if (!currentBatchId || workbookBusy) return;
   if (dirtyRows.size > 0) throw new Error("Excel oluşturmadan önce değişiklikleri kaydedin.");
-  const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`);
-  showDownload(payload);
-  message.textContent = `${payload.filename} oluşturuldu.`;
+  workbookBusy = true;
+  updateButtons();
+  clearDownload();
+  message.textContent = "Excel hazırlanıyor...";
+  try {
+    const filename = kind === "hamdata" ? "HAMDATA.xlsx" : "HAMDATA-MUHASEBE.xlsx";
+    const handle = await chooseSaveFile(filename);
+    const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`, {}, 201);
+    showDownload(payload);
+    await saveDownload(payload.downloadUrl, payload.filename, handle);
+    message.textContent = handle ? `${payload.filename} kaydedildi.`
+      : `${payload.filename} tarayıcı indirmelerine gönderildi. Gerekirse “Excel'i tekrar indir” bağlantısını kullanın.`;
+  } catch (error) {
+    if (error.name !== "AbortError") throw error;
+    message.textContent = "Kaydetme iptal edildi.";
+  } finally {
+    workbookBusy = false;
+    updateButtons();
+  }
 }
 
 form.addEventListener("submit", async (event) => {
@@ -386,7 +559,7 @@ form.addEventListener("submit", async (event) => {
     currentBatchId = payload.batch.id;
     setSummary(payload.summary);
     renderRows(payload.rows || []);
-    message.textContent = `${payload.batch.importedCount} belge işlendi. Batch: ${payload.batch.id}`;
+    message.textContent = `${payload.batch.importedCount} belge işlendi. Bilgileri inceleyip Excel dosyanızı oluşturabilirsiniz.`;
   } catch (error) {
     message.textContent = error.message;
   } finally {
@@ -448,10 +621,12 @@ exportHamdataAccountingButton.addEventListener("click", async () => {
 
 returnForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (returnBusy || responsesBusy) return;
   const [file] = returnFileInput.files;
   if (!file) return;
-  const button = returnForm.querySelector("button");
-  button.disabled = true;
+  returnBusy = true;
+  const generation = ++returnGeneration;
+  updateButtons();
   clearResponseDownloads();
   clearResponsePreview();
   returnMessage.textContent = "Muhasebe dönüşü işleniyor...";
@@ -460,26 +635,29 @@ returnForm.addEventListener("submit", async (event) => {
     body.append("file", file);
     const response = await fetch("/api/accounting-returns", { method: "POST", body });
     const payload = await response.json();
+    if (generation !== returnGeneration) return;
     if (!response.ok) throw new Error(payload.error?.message || "Muhasebe dönüşü içe aktarılamadı.");
     currentReturnId = payload.return.id;
     setReturnSummary(payload.summary);
     renderReturnRows(payload.rows || []);
     clearResponseDownloads();
     clearResponsePreview();
-    returnMessage.textContent = `${payload.summary.total} satır eşleşti. Return: ${payload.return.id}`;
+    returnMessage.textContent = `${payload.summary.total} satır incelendi. PDF oluşturmak için uygun satırları seçin.`;
     updateButtons();
   } catch (error) {
-    returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.message;
   } finally {
-    button.disabled = false;
+    returnBusy = false;
+    updateButtons();
   }
 });
 
 reloadReturnButton.addEventListener("click", async () => {
+  const generation = returnGeneration;
   try {
     await loadReturn();
   } catch (error) {
-    returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.message;
   }
 });
 
@@ -494,6 +672,8 @@ async function loadResponseProfile() {
 }
 
 async function previewResponse(rowId) {
+  if (returnBusy || responsesBusy) return;
+  const generation = returnGeneration;
   const row = responseRowById(rowId);
   if (!currentReturnId || !row || row.status === "blocked") {
     clearResponsePreview("Bu satır önizlenemez.");
@@ -519,10 +699,12 @@ async function previewResponse(rowId) {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error?.message || "Önizleme alınamadı.");
     if (currentPreviewRowId !== rowId) return;
+    if (generation !== returnGeneration) return;
     responsePreviewFrame.srcdoc = payload.html || "";
     responsePreviewStatus.textContent = "Önizleme güncel.";
   } catch (error) {
     if (currentPreviewRowId !== rowId) return;
+    if (generation !== returnGeneration) return;
     responsePreviewFrame.removeAttribute("srcdoc");
     responsePreviewStatus.textContent = error.message;
   } finally {
@@ -543,6 +725,7 @@ async function saveResponseProfile() {
 }
 
 selectValidResponsesButton.addEventListener("click", () => {
+  if (returnBusy || responsesBusy) return;
   for (const input of returnRows.querySelectorAll("input[data-role=select-response]")) {
     input.checked = !input.disabled;
   }
@@ -581,8 +764,14 @@ if (returnForm) {
 }
 
 generateResponsesButton.addEventListener("click", async () => {
+  if (generateResponsesButton.disabled) return;
+  responsesBusy = true;
+  const generation = returnGeneration;
+  updateButtons();
+  returnMessage.textContent = "Cevap PDF'leri hazırlanıyor...";
   try {
     clearResponseDownloads();
+    const handle = await chooseSaveFile("CEVAPLAR.zip");
     const rowIds = selectedResponseIds();
     const payload = await postJson(`/api/accounting-returns/${encodeURIComponent(currentReturnId)}/response-exports`, {
       rowIds,
@@ -591,9 +780,18 @@ generateResponsesButton.addEventListener("click", async () => {
         address: responseAddress.value
       }
     }, 201);
+    if (generation !== returnGeneration) return;
     showResponseDownloads(payload);
-    returnMessage.textContent = `${(payload.files || []).length} PDF oluşturuldu.`;
+    responseDownloadPanel.scrollIntoView({ block: "nearest" });
+    await saveDownload(payload.archive.downloadUrl, payload.archive.filename, handle);
+    if (generation !== returnGeneration) return;
+    returnMessage.textContent = handle ? "Tüm cevap PDF'leri tek ZIP dosyası olarak kaydedildi."
+      : "Tüm cevap PDF'lerini içeren ZIP tarayıcı indirmelerine gönderildi.";
   } catch (error) {
-    returnMessage.textContent = error.message;
+    if (generation === returnGeneration) returnMessage.textContent = error.name === "AbortError"
+      ? "Kaydetme iptal edildi." : error.message;
+  } finally {
+    responsesBusy = false;
+    updateButtons();
   }
 });

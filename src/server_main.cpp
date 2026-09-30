@@ -2,7 +2,8 @@
 #include "muz/web/http_server.hpp"
 
 #include <QCommandLineParser>
-#include <QCoreApplication>
+#include <QGuiApplication>
+#include <QFontDatabase>
 #include <QEventLoop>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -20,7 +21,15 @@ std::filesystem::path path(const QString& value) {
 }
 
 int main(int argc, char* argv[]) {
-    QCoreApplication app(argc, argv);
+    // QTextDocument/QPdfWriter need the GUI font infrastructure even without
+    // windows or a display server. Keep the HTTP process headless by default.
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    // Match the desktop CLI's offscreen font setup so PDFs contain real glyphs.
+    for (const auto* font : {"times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf", "arial.ttf"})
+        QFontDatabase::addApplicationFont(qEnvironmentVariable("WINDIR") + "/Fonts/" + font);
+#endif
     QCoreApplication::setApplicationName("Muzakere Server");
     QCoreApplication::setOrganizationName("Muzakere");
 
@@ -52,6 +61,7 @@ int main(int argc, char* argv[]) {
         muz::LocalWorkspace workspace(path(workspace_root));
         muz::WebServer server(workspace);
         if (!server.listen(QHostAddress(parser.value("host")), requested_port)) return 2;
+        qInfo("Muzakere HTTP port: %u", static_cast<unsigned>(server.port()));
         if (parser.isSet("smoke-test")) {
             QNetworkAccessManager network;
             QEventLoop loop;

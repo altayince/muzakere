@@ -49,6 +49,7 @@ POST /api/response-profile
 POST /api/accounting-returns/{returnId}/responses/{rowId}/preview
 POST /api/accounting-returns/{returnId}/response-exports
 GET  /api/response-exports/{exportId}
+GET  /api/response-exports/{exportId}/download
 GET  /api/response-exports/{exportId}/files/{fileId}
 ```
 
@@ -124,6 +125,42 @@ Implemented in MUZ-27:
 - blocked response rows remain unpreviewable in the browser
 - stale response preview/download state is cleared when a new ZIP or accounting return flow starts
 - static web asset tests for preview wiring, valid-row selection and stale-state cleanup hooks
+
+Implemented in MUZ-29:
+
+- two-stage legal workspace: document review/Excel downloads, then accounting return/response PDFs
+- compact tables with expandable, labelled editors/details; all existing review fields remain available
+- bounded keyboard-scrollable table regions with sticky headers on small screens
+- workbook generation starts the Excel download directly and retains a retry link
+- response preview, profile, selection and PDF generation with one ZIP download live in stage 2
+
+Workbook creation returns HTTP 201; the browser downloads the resulting opaque
+URL. Where supported, clicking an Excel/ZIP download opens the native Save As
+picker before awaiting network operations. Otherwise the browser's normal
+download preferences apply. Canceling the picker does not start a workbook export.
+PDF generation automatically saves one ZIP containing all selected response PDFs.
+The compact result panel shows the PDF count and one retry link. Canceling Save As
+before generation creates no response export. Export metadata includes an `archive`
+object with `filename` and an opaque `downloadUrl`; existing individual PDF URLs
+remain available through the API. ZIP members retain their UTF-8 filenames and
+the exact core-generated PDF bytes. A missing member fails the whole download,
+rather than serving an incomplete ZIP. Packaging never alters persisted PDFs,
+manifests, hashes or audit records.
+
+While an accounting upload is pending, old rows are retained but reload, selection,
+preview and PDF generation are disabled. A failed upload restores those actions
+without losing the previous return or selection. Late preview/reload responses
+from the previous flow are ignored.
+
+The standalone HTTP executable initializes `QGuiApplication` with the offscreen
+platform by default, since core PDF rendering requires Qt's font infrastructure.
+A subprocess regression exercises Excel and PDF downloads through the actual
+server executable, rather than relying only on tests hosted by `QApplication`.
+
+Browser interaction/layout regressions can be run with Python Playwright and Chromium:
+install with `python -m pip install playwright` and `python -m playwright install chromium`,
+then run `python tests/web_ui_test.py`. This uses synthetic API responses and local assets;
+the C++ tests continue to cover real export, persistence and response generation.
 
 Not implemented yet:
 - authentication and authorization
