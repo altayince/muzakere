@@ -111,7 +111,7 @@ Implemented in MUZ-25:
 
 - browser response profile fields for lawyer and address, persisted through `LocalWorkspace::save_response_profile`
 - response preview endpoint backed by `LocalWorkspace::preview_response`
-- response PDF export endpoint backed by `LocalWorkspace::generate_responses`
+- response PDF export endpoint backed by `LocalWorkspace::generate_responses`, storing generated PDFs under the workspace-managed `generated/responses` tree
 - selectable valid accounting-return rows and one generated VAR/YOK PDF per selected row
 - opaque PDF export/file download IDs so local filesystem paths are never exposed to the browser
 - integration tests for profile persistence, preview, VAR/YOK PDF creation, PDF download headers/content and invalid/blocked row failures

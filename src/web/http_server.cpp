@@ -883,9 +883,7 @@ QByteArray WebServer::create_response_export(const QString& return_id, const Req
             return json(error_body("bad_payload", "At least one row id is required."));
         }
 
-        const auto parent = export_dir_->path() + "/response-pdfs";
-        if (!QDir().mkpath(parent)) throw Error(ErrorCode::file_io);
-        const auto output = workspace_.generate_responses(id, row_ids, native_path(parent), profile);
+        const auto output = workspace_.generate_responses(id, row_ids, {}, profile);
 
         ResponseExportSet registered;
         registered.return_id = id;

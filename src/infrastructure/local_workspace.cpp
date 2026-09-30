@@ -316,8 +316,9 @@ std::filesystem::path LocalWorkspace::generate_responses(const std::string& retu
         const auto found=std::find_if(rows.begin(),rows.end(),[&](const auto& row){return row.id==id;});
         if(!selected.insert(id).second || found==rows.end() || !found->errors.empty())throw Error(ErrorCode::invalid_input);
     }
-    if(output.empty() || !QDir().mkpath(qpath(output)))throw Error(ErrorCode::file_io);
-    const auto parent=QFileInfo(qpath(output)).canonicalFilePath();
+    const auto target_root=output.empty()?impl_->root/"generated"/"responses":output;
+    if(!QDir().mkpath(qpath(target_root)))throw Error(ErrorCode::file_io);
+    const auto parent=QFileInfo(qpath(target_root)).canonicalFilePath();
     for(const auto* name:{"originals","database","staging"}) {
         const auto forbidden=qpath(impl_->root)+'/'+name;
         if(parent.compare(forbidden,Qt::CaseInsensitive)==0 || parent.startsWith(forbidden+'/',Qt::CaseInsensitive))throw Error(ErrorCode::invalid_input);
