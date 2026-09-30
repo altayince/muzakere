@@ -43,6 +43,12 @@ POST /api/batches/{batchId}/exports/hamdata-with-accounting
 GET  /api/exports/{exportId}/download
 POST /api/accounting-returns
 GET  /api/accounting-returns/{returnId}
+GET  /api/response-profile
+POST /api/response-profile
+GET  /api/accounting-returns/{returnId}/responses/{rowId}/preview
+POST /api/accounting-returns/{returnId}/response-exports
+GET  /api/response-exports/{exportId}
+GET  /api/response-exports/{exportId}/files/{fileId}
 ```
 
 `POST /api/imports` accepts either raw `application/zip` bytes or a
@@ -101,8 +107,16 @@ Implemented in MUZ-23:
 - browser table for VAR/YOK, warnings and blockers from existing C++ matching logic
 - integration tests for numeric, zero, signed and blank returns, fanout, duplicate/missing matches, invalid cells and malformed uploads
 
+Implemented in MUZ-25:
+
+- browser response profile fields for lawyer and address, persisted through `LocalWorkspace::save_response_profile`
+- response preview endpoint backed by `LocalWorkspace::preview_response`
+- response PDF export endpoint backed by `LocalWorkspace::generate_responses`
+- selectable valid accounting-return rows and one generated VAR/YOK PDF per selected row
+- opaque PDF export/file download IDs so local filesystem paths are never exposed to the browser
+- integration tests for profile persistence, preview, VAR/YOK PDF creation, PDF download headers/content and invalid/blocked row failures
+
 Not implemented yet:
-- VAR/YOK PDF generation and download
 - authentication and authorization
 - cloud object/database storage
 - Cloudflare deployment

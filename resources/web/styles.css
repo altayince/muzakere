@@ -148,6 +148,44 @@ button:disabled {
   font-weight: 700;
 }
 
+.profile-grid {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.profile-grid label {
+  margin-bottom: 0;
+}
+
+.profile-grid input,
+.profile-grid textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.download-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.download-list a {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: #fff;
+}
+
 .summary {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -266,6 +304,10 @@ td input[type=checkbox] {
   .upload-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .profile-grid {
+    grid-template-columns: 1fr;
   }
 
   .summary {
