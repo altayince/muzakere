@@ -35,6 +35,12 @@ Open `http://127.0.0.1:8080/` and upload a ZIP. The server also exposes:
 ```text
 GET  /health
 POST /api/imports
+GET  /api/batches/{batchId}/review
+POST /api/batches/{batchId}/review/save
+POST /api/batches/{batchId}/review/approve
+POST /api/batches/{batchId}/exports/hamdata
+POST /api/batches/{batchId}/exports/hamdata-with-accounting
+GET  /api/exports/{exportId}/download
 ```
 
 `POST /api/imports` accepts either raw `application/zip` bytes or a
@@ -77,9 +83,16 @@ Implemented in MUZ-19:
 - UI indicators for unsaved, saved, approved, warnings and blockers
 - regression tests for persistence, approval and invalid API payloads
 
+Implemented in MUZ-21:
+
+- browser buttons for HAMDATA and HAMDATA + MUHASEBE workbook generation
+- batch-scoped export endpoints that call `LocalWorkspace::export_hamdata`
+- opaque export download IDs so local filesystem paths are never exposed to the browser
+- approval-gated web export flow while preserving existing desktop exporter behavior
+- integration tests for XLSX downloads, headers, invalid IDs, blockers and MUHASEBE deduplication
+
 Not implemented yet:
 
-- HAMDATA/MUHASEBE download
 - accounting return import
 - VAR/YOK PDF generation and download
 - authentication and authorization

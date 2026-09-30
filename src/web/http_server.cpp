@@ -1,7 +1,9 @@
 #include "muz/web/http_server.hpp"
 #include "muz/domain/accounting.hpp"
+#include "qt_paths.hpp"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -10,6 +12,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QUuid>
 #include <algorithm>
 #include <optional>
 #include <set>
@@ -232,7 +235,9 @@ struct WebServer::Request {
 };
 
 WebServer::WebServer(Workspace& workspace, QObject* parent)
-    : QObject(parent), workspace_(workspace), server_(std::make_unique<QTcpServer>()) {
+    : QObject(parent), workspace_(workspace), server_(std::make_unique<QTcpServer>()),
+      export_dir_(std::make_unique<QTemporaryDir>()) {
+    if (!export_dir_->isValid()) throw Error(ErrorCode::file_io);
     init_web_resources();
     connect(server_.get(), &QTcpServer::newConnection, this, [this] { accept_pending(); });
 }
@@ -312,6 +317,21 @@ void WebServer::handle(QTcpSocket* socket, const Request& request) {
         respond(socket, status, approve_review(segments[2], request, status));
         return;
     }
+    if (segments.size() == 5 && segments[0] == "api" && segments[1] == "batches" && segments[3] == "exports" &&
+        (segments[4] == "hamdata" || segments[4] == "hamdata-with-accounting") && request.method == "POST") {
+        int status = 200;
+        respond(socket, status, create_hamdata_export(segments[2], segments[4] == "hamdata-with-accounting", status));
+        return;
+    }
+    if (segments.size() == 4 && segments[0] == "api" && segments[1] == "exports" && segments[3] == "download" &&
+        request.method == "GET") {
+        int status = 200;
+        QByteArray content_type;
+        std::vector<Header> headers;
+        const auto body = download_export(segments[2], status, content_type, headers);
+        respond(socket, status, body, content_type.isEmpty() ? QByteArray("application/json") : content_type, headers);
+        return;
+    }
     if (request.method == "POST" && request.path == "/api/imports") {
         int status = 200;
         const auto body = import_zip(request, status);
@@ -328,12 +348,15 @@ void WebServer::handle(QTcpSocket* socket, const Request& request) {
     respond(socket, 405, json(error_body("method_not_allowed", "Method is not supported.")));
 }
 
-void WebServer::respond(QTcpSocket* socket, int status, QByteArray body, QByteArray content_type) const {
+void WebServer::respond(QTcpSocket* socket, int status, QByteArray body, QByteArray content_type,
+        const std::vector<Header>& headers) const {
     QByteArray response = "HTTP/1.1 " + QByteArray::number(status) + ' ' + phrase(status) + "\r\n";
     response += "Content-Type: " + content_type + "\r\n";
     response += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
     response += "Connection: close\r\n";
-    response += "X-Content-Type-Options: nosniff\r\n\r\n";
+    response += "X-Content-Type-Options: nosniff\r\n";
+    for (const auto& header : headers) response += header.name + ": " + header.value + "\r\n";
+    response += "\r\n";
     response += body;
     socket->write(response);
     socket->disconnectFromHost();
@@ -496,6 +519,78 @@ QByteArray WebServer::approve_review(const QString& batch_id, const Request& req
         status = error.code() == ErrorCode::invalid_input ? 400 : 500;
         return json(error_body("approval_failed", "Rows could not be approved."));
     }
+}
+
+QByteArray WebServer::create_hamdata_export(const QString& batch_id, bool with_accounting, int& status) const {
+    try {
+        const auto id = batch_id.toStdString();
+        const auto batches = workspace_.batches();
+        const auto batch = std::find_if(batches.begin(), batches.end(), [&](const auto& item) { return item.id == id; });
+        if (batch == batches.end()) {
+            status = 404;
+            return json(error_body("batch_not_found", "Batch was not found."));
+        }
+        const auto rows = workspace_.accounting_rows(id);
+        if (rows.empty()) {
+            status = 400;
+            return json(error_body("export_blocked", "Review rows must exist before export."));
+        }
+        const auto blocked = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
+            return !row.approved || !can_approve(row);
+        });
+        if (blocked != rows.end()) {
+            status = 400;
+            return json(error_body("export_blocked", "All review rows must be saved and explicitly approved before export."));
+        }
+
+        const auto export_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto prefix = with_accounting ? QStringLiteral("HAMDATA-MUHASEBE-") : QStringLiteral("HAMDATA-");
+        const auto filename = prefix + QString::fromStdString(id).left(8) + QStringLiteral(".xlsx");
+        const auto output = export_dir_->path() + '/' + export_id + QStringLiteral(".xlsx");
+        workspace_.export_hamdata(id, native_path(output), with_accounting);
+
+        {
+            std::lock_guard guard(export_mutex_);
+            exports_.insert({export_id.toStdString(), {native_path(output), filename,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}});
+        }
+        status = 201;
+        return json({
+            {"exportId", export_id},
+            {"filename", filename},
+            {"downloadUrl", QStringLiteral("/api/exports/%1/download").arg(export_id)}
+        });
+    } catch (const Error& error) {
+        status = error.code() == ErrorCode::invalid_input ? 400 : 500;
+        return json(error_body("export_failed", "HAMDATA workbook could not be generated."));
+    }
+}
+
+QByteArray WebServer::download_export(const QString& export_id, int& status, QByteArray& content_type,
+        std::vector<Header>& headers) const {
+    ExportFile export_file;
+    {
+        std::lock_guard guard(export_mutex_);
+        const auto found = exports_.find(export_id.toStdString());
+        if (found == exports_.end()) {
+            status = 404;
+            content_type = "application/json";
+            return json(error_body("export_not_found", "Export was not found."));
+        }
+        export_file = found->second;
+    }
+
+    QFile file(qpath(export_file.path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        status = 500;
+        content_type = "application/json";
+        return json(error_body("download_failed", "Export file could not be read."));
+    }
+    status = 200;
+    content_type = export_file.content_type;
+    headers.push_back({"Content-Disposition", QByteArray("attachment; filename=\"") + export_file.filename.toUtf8() + "\""});
+    headers.push_back({"Cache-Control", "no-store"});
+    return file.readAll();
 }
 
 } // namespace muz

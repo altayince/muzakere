@@ -5,6 +5,11 @@ const tbody = document.querySelector("#rows");
 const reloadButton = document.querySelector("#reloadReview");
 const saveButton = document.querySelector("#saveChanges");
 const approveButton = document.querySelector("#approveRows");
+const exportHamdataButton = document.querySelector("#exportHamdata");
+const exportHamdataAccountingButton = document.querySelector("#exportHamdataAccounting");
+const downloadPanel = document.querySelector("#downloadPanel");
+const downloadLabel = document.querySelector("#downloadLabel");
+const downloadWorkbook = document.querySelector("#downloadWorkbook");
 
 let currentBatchId = "";
 let currentRows = [];
@@ -28,6 +33,20 @@ const editableFields = [
   ["firstNotice", "select"],
   ["notes", "text"]
 ];
+
+function clearDownload() {
+  downloadPanel.hidden = true;
+  downloadLabel.textContent = "";
+  downloadWorkbook.removeAttribute("href");
+  downloadWorkbook.removeAttribute("download");
+}
+
+function showDownload(payload) {
+  downloadLabel.textContent = `${payload.filename} hazır.`;
+  downloadWorkbook.href = payload.downloadUrl;
+  downloadWorkbook.download = payload.filename;
+  downloadPanel.hidden = false;
+}
 
 function setSummary(summary = {}) {
   for (const id of ["total", "ready", "review", "blocked", "approved"]) {
@@ -64,6 +83,7 @@ function editableCell(item, field, type) {
 
 function markDirty(rowId) {
   dirtyRows.add(rowId);
+  clearDownload();
   const row = tbody.querySelector(`tr[data-row-id="${CSS.escape(rowId)}"]`);
   if (row) {
     row.classList.add("dirty");
@@ -87,9 +107,12 @@ function rowPayload(rowId) {
 
 function updateButtons() {
   const hasBatch = Boolean(currentBatchId);
+  const hasDirty = dirtyRows.size > 0;
   reloadButton.disabled = !hasBatch;
-  saveButton.disabled = !hasBatch || dirtyRows.size === 0;
+  saveButton.disabled = !hasBatch || !hasDirty;
   approveButton.disabled = !hasBatch || selectedIds().length === 0;
+  exportHamdataButton.disabled = !hasBatch || hasDirty;
+  exportHamdataAccountingButton.disabled = !hasBatch || hasDirty;
 }
 
 function renderRows(rows) {
@@ -147,6 +170,7 @@ function renderRows(rows) {
 
 async function loadReview() {
   if (!currentBatchId) return;
+  clearDownload();
   message.textContent = "İnceleme satırları yenileniyor...";
   const response = await fetch(`/api/batches/${encodeURIComponent(currentBatchId)}/review`);
   const payload = await response.json();
@@ -156,7 +180,7 @@ async function loadReview() {
   message.textContent = "İnceleme satırları güncel.";
 }
 
-async function postJson(url, body) {
+async function postJson(url, body = {}) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -167,12 +191,21 @@ async function postJson(url, body) {
   return payload;
 }
 
+async function generateWorkbook(kind) {
+  if (!currentBatchId) return;
+  if (dirtyRows.size > 0) throw new Error("Excel oluşturmadan önce değişiklikleri kaydedin.");
+  const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/exports/${kind}`);
+  showDownload(payload);
+  message.textContent = `${payload.filename} oluşturuldu.`;
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const [file] = fileInput.files;
   if (!file) return;
   const button = form.querySelector("button");
   button.disabled = true;
+  clearDownload();
   message.textContent = "ZIP işleniyor...";
   try {
     const body = new FormData();
@@ -201,6 +234,7 @@ reloadButton.addEventListener("click", async () => {
 
 saveButton.addEventListener("click", async () => {
   try {
+    clearDownload();
     const rows = [...dirtyRows].map(rowPayload);
     const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/review/save`, { rows });
     setSummary(payload.summary);
@@ -213,12 +247,29 @@ saveButton.addEventListener("click", async () => {
 
 approveButton.addEventListener("click", async () => {
   try {
+    clearDownload();
     const rowIds = selectedIds();
     if (rowIds.some((id) => dirtyRows.has(id))) throw new Error("Onaydan önce seçili satırlardaki değişiklikleri kaydedin.");
     const payload = await postJson(`/api/batches/${encodeURIComponent(currentBatchId)}/review/approve`, { rowIds });
     setSummary(payload.summary);
     renderRows(payload.rows || []);
     message.textContent = "Seçili satırlar onaylandı.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+});
+
+exportHamdataButton.addEventListener("click", async () => {
+  try {
+    await generateWorkbook("hamdata");
+  } catch (error) {
+    message.textContent = error.message;
+  }
+});
+
+exportHamdataAccountingButton.addEventListener("click", async () => {
+  try {
+    await generateWorkbook("hamdata-with-accounting");
   } catch (error) {
     message.textContent = error.message;
   }

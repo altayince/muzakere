@@ -130,6 +130,24 @@ button:disabled {
   color: var(--muted);
 }
 
+.download-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #badbcc;
+  border-radius: 6px;
+  background: #ecf8f0;
+  color: var(--green-ink);
+}
+
+.download-panel a {
+  color: var(--blue);
+  font-weight: 700;
+}
+
 .summary {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
